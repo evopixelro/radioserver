@@ -1,16 +1,28 @@
 # Radio Server
 A shoutcast radio server with autodj.
 
-# How to install:
+## How to install:
+- Install lib32stdc++6
+- Copy git files on your Linux user
+- Give to radioserver file the 777 permission
+- Config the sc_serv.conf and sc_trans.conf file
+- Start the radio server by using command `./radioserver start`
+- Start the radio server autodj by using command `./radioserver autodjon`
 
+## Commands for Ubuntu/Debian:
 Install lib32stdc++6
 
-Copy git files on your Linux user
+`apt-get install lib32stdc++6`
 
-Give to radioserver file the 777 permission
+Give 777 permission
 
-Config the sc_serv.conf and sc_trans.conf file
+`chmod -R 777 radioserver`
 
-Start the radio server by using command ./radioserver start
+## Commands for CentOS
+Install lib32stdc++6
 
-Start the radio server autodj by using command ./radioserver autodjon
+`yum install lib32stdc++6`
+
+Give 777 permission
+
+`chmod -R 777 radioserver`
