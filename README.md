@@ -5,7 +5,7 @@ A shoutcast radio server with autodj.
 
 Install lib32stdc++6
 
-Copy git on your Linux user
+Copy git files on your Linux user
 
 Give to radioserver file the 777 permission
 
