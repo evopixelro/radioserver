@@ -7,6 +7,7 @@ A shoutcast radio server with autodj.
 - Give to radioserver file the 777 permission
 - Config the sc_serv.conf and sc_trans.conf file
 - Start the radio server by using command `./radioserver start`
+- Take a look on playlist.txt file
 - Start the radio server autodj by using command `./radioserver autodjon`
 
 ## Commands for Ubuntu/Debian:
