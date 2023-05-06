@@ -1,0 +1,28 @@
+#!/bin/bash
+case $1 in
+setup)
+cd server
+./sc_serv setup
+;;
+start)
+cd server
+./sc_serv &
+;;
+stop)
+killall sc_serv
+;;
+start_daemon)
+cd server
+./sc_serv daemon &
+;;
+autodjon)
+cd server/autodj
+./sc_trans_linux &
+;;
+autodjoff)
+killall sc_trans_linux
+;;
+*)
+echo "Usage radioserver setup|start|stop|start_daemon|autodjon|autodjoff"
+;;
+esac
