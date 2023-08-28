@@ -1,3 +1,3 @@
 cd server/autodj
-find /home/radioserver/server/autodj/EvoPixelPlaylist -type f -name "*.mp3" > playlist.lst
+find /home/radioserver/server/autodj/Playlist -type f -name "*.mp3" > playlist.lst
 cd
