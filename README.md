@@ -1,7 +1,7 @@
 # Radio Server
 A shoutcast radio server with autodj.
 
-## How to install:
+## How to install
 - Install lib32stdc++6
 - Copy git files on your Linux user
 - Give to radioserver file the 777 permission
@@ -10,7 +10,7 @@ A shoutcast radio server with autodj.
 - Take a look on playlist.txt file
 - Start the radio server autodj by using command `./radioserver autodjon`
 
-## Commands for Ubuntu/Debian:
+## Commands for Ubuntu/Debian
 Install lib32stdc++6
 
 `apt-get install lib32stdc++6`
