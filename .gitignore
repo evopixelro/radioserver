@@ -1,0 +1,32 @@
+.run/
+logs/
+control/
+node_modules/
+
+# Vendor binaries and assets stay local
+/sc_serv
+/sc_serv.exe
+/cacert.pem
+/setup/
+/autodj/
+/runtime/
+
+# Active configuration stays local
+sc_serv.conf
+autodj.config.json
+playlist.config.json
+
+# Managed runtimes and download cache
+bin/*
+!bin/.gitkeep
+
+# Audio libraries and generated playlists
+playlists/**
+!playlists/universal/
+!playlists/universal/.gitkeep
+
+*.log
+*.tmp-*
+*.liq-cache
+.DS_Store
+Thumbs.db

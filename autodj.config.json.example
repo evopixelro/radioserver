@@ -1,0 +1,84 @@
+{
+  // normal = ordered, randomize = shuffled round, random = random track
+  // Consecutive names repeat only when no other playable track is available
+  "playlistMode": "randomize",
+
+  // Check for playlist changes before selection every 1-3600 seconds
+  "playlistReloadSeconds": 300,
+
+  // Crossfade: 0-30 seconds, 0 disables it
+  "crossfadeSeconds": 0,
+
+  "logging": {
+    // 1 = minimal, 2 = important, 3 = info, 4-5 = debug
+    "level": 2,
+
+    // Rotate the active log at 1-1024 MiB
+    "maxSizeMb": 10,
+
+    // Retain 1-100 archives, delete older AutoDJ logs
+    "maxFiles": 5
+  },
+
+  "normalization": {
+    // Enable loudness normalization
+    "enabled": false,
+
+    // Target loudness: -30 to -5 LUFS
+    "targetLufs": -14
+  },
+
+  "server": {
+    // SHOUTcast source address and PortBase
+    "host": "127.0.0.1",
+
+    // DNAS PortBase: 1-65534, ICY also uses PortBase + 1
+    "port": 8000,
+
+    // Must match password or streampassword_# in sc_serv.conf
+    "password": "CHANGE_ME_STREAM_PASSWORD",
+
+    // Public station metadata sent as UTF-8
+    "name": "Radio Name",
+    "url": "https://example.com",
+    "genre": "Various",
+    "public": true
+  },
+
+  // Duplicate this object for another stream
+  // Every enabled output needs a unique id and streamId
+  "outputs": [
+    {
+      // Letters, numbers, underscores and hyphens only
+      "id": "main",
+
+      // false keeps this output configured but inactive
+      "enabled": true,
+
+      // Must match streamid_# in sc_serv.conf
+      "streamId": 1,
+
+      // Playlist IDs from playlist.config.json, [] or omitted = all enabled
+      "playlists": [],
+
+      // Supported output codec
+      "codec": "mp3",
+
+      // MPEG-1 (32/44.1/48 kHz): 32, 40, 48, 56, 64, 80, 96, 112, 128,
+      // 160, 192, 224, 256 or 320 kbps
+      // MPEG-2/2.5 (8-24 kHz): 8, 16, 24, 32, 40, 48, 56, 64, 80, 96,
+      // 112, 128, 144 or 160 kbps
+      "bitrateKbps": 320,
+
+      // MP3 rates: 8000, 11025, 12000, 16000, 22050, 24000, 32000,
+      // 44100 or 48000 Hz
+      "sampleRate": 48000,
+
+      // 1 = mono, 2 = stereo
+      "channels": 2,
+
+      // LAME quality: 0 = highest, 9 = fastest
+      "internalQuality": 0
+    }
+  ]
+}
