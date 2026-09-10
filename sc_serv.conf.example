@@ -1,0 +1,219 @@
+; SHOUTcast DNAS configuration.
+; Required settings are enabled in their relevant sections. Copy this file to
+; sc_serv.conf, then replace active CHANGE_ME/your_IP values before starting.
+; All other directives are optional and remain commented out.
+
+; -----------------------------------------------------------------------------
+; Banning and reserved listeners (0 = disabled, 1 = enabled)
+; -----------------------------------------------------------------------------
+; Required, active control files
+banfile=control/sc_serv.ban
+ripfile=control/sc_serv.rip
+;savebanlistonexit=1
+;riponly=0
+;saveriplistonexit=1
+;agentfile=control/sc_serv.agent
+;saveagentlistonexit=1
+;blockemptyuseragent=0
+
+; -----------------------------------------------------------------------------
+; Listener behaviour
+; -----------------------------------------------------------------------------
+; Required, active listener address
+destip=your_IP
+;maxuser=512
+;listenertime=0
+;autodumpusers=0
+;srcip=any
+;publicip=
+;titleformat=
+;urlformat=
+
+; -----------------------------------------------------------------------------
+; Debug logging (0 = disabled, 1 = enabled)
+; -----------------------------------------------------------------------------
+;yp2debug=0
+;shoutcastsourcedebug=0
+;uvox2sourcedebug=0
+;shoutcast1clientdebug=0
+;shoutcast2clientdebug=0
+;relayshoutcastdebug=0
+;relayuvoxdebug=0
+;relaydebug=0
+;streamdatadebug=0
+;httpstyledebug=0
+;statsdebug=0
+;microserverdebug=0
+;threadrunnerdebug=0
+;flashpolicyserverdebug=0
+;webclientdebug=0
+;admetricsdebug=0
+
+; -----------------------------------------------------------------------------
+; Flash policy compatibility
+; -----------------------------------------------------------------------------
+;flashpolicyfile=crossdomain.xml
+;flashpolicyserverport=0
+
+; -----------------------------------------------------------------------------
+; Intro, backup and artwork files
+; -----------------------------------------------------------------------------
+;introfile=
+;backupfile=
+;backuptitle=
+;backuploop=0
+;maxspecialfilesize=30000000
+;artworkfile=
+
+; -----------------------------------------------------------------------------
+; Logging
+; -----------------------------------------------------------------------------
+; Required, active log files
+logfile=logs/sc_serv.log
+w3clog=logs/sc_w3c.log
+;log=1
+;screenlog=1
+; Keep five native log archives
+logrotates=5
+;logarchive=0
+;logclients=1
+; Rotate native logs daily
+rotateinterval=86400
+;w3cenable=1
+
+; -----------------------------------------------------------------------------
+; General server behaviour
+; configrewrite: 0 = off, 1 = save changed values, 2 = save all values
+; -----------------------------------------------------------------------------
+;configrewrite=0
+;cpucount=0
+;unique=
+;include=
+;admincssfile=v2
+;faviconfile=
+;faviconmimetype=image/x-icon
+;robotstxtfile=
+;metainterval=16384
+;uvoxcipherkey=foobar
+;pidfile=
+
+; -----------------------------------------------------------------------------
+; Networking
+; -----------------------------------------------------------------------------
+; Required, active network and credentials
+PortBase=8000
+adminpassword=CHANGE_ME_ADMIN_PASSWORD
+password=CHANGE_ME_STREAM_PASSWORD
+;publicport=
+;portlegacy=
+;alternateports=80,8080
+;autodumptime=30
+;maxheaderlinesize=4096
+;maxheaderlinecount=100
+;namelookups=0
+
+; -----------------------------------------------------------------------------
+; Network buffers
+; buffertype: 0 = fixed, 1 = adaptive
+; -----------------------------------------------------------------------------
+;buffertype=1
+;adaptivebuffersize=5
+;fixedbuffersize=1048576
+;bufferhardlimit=16777216
+
+; -----------------------------------------------------------------------------
+; Relaying
+; -----------------------------------------------------------------------------
+;allowrelay=1
+;allowpublicrelay=1
+;relayreconnecttime=5
+;relayconnectretries=0
+;maxhttpredirects=5
+;relayport=80
+;relayserver=
+
+; -----------------------------------------------------------------------------
+; Global stream limits. Values are bits per second, not kbps.
+; Leave blank/unset to accept every valid source bitrate.
+; -----------------------------------------------------------------------------
+; Required, active stream policy
+requirestreamconfigs=1
+; No maxbitrate/streammaxbitrate is set, so DNAS accepts every valid source bitrate.
+;minbitrate=
+;maxbitrate=
+
+; -----------------------------------------------------------------------------
+; Stream-specific options. Copy the group and change _1 for extra streams.
+; public mode: default, always or never
+; hidden statistics: blank, stats or all
+; -----------------------------------------------------------------------------
+; Required, active stream #1
+streamid_1=1
+streampath_1=stream
+streampassword_1=CHANGE_ME_STREAM_PASSWORD
+streamadminpassword_1=CHANGE_ME_STREAM_ADMIN_PASSWORD
+streamauthhash_1=CHANGE_ME_AUTH_HASH
+;streamportlegacy_1=
+;streamrelayurl_1=
+;streambackupurl_1=
+;streammaxuser_1=0
+;streampublicserver_1=default
+;streamallowrelay_1=1
+;streamallowpublicrelay_1=1
+;streamriponly_1=0
+;streamautodumptime_1=0
+;streamautodumpusers_1=0
+;streamlistenertime_1=0
+;streamintrofile_1=
+;streambackupfile_1=
+;streambackuptitle_1=
+;streambackuploop_1=0
+;streamagentfile_1=control/sc_serv_1.agent
+;streamartworkfile_1=
+;streambanfile_1=control/sc_serv_1.ban
+;streamripfile_1=control/sc_serv_1.rip
+;streamw3clog_1=logs/sc_w3c_1.log
+;streamsonghistory_1=10
+;streamminbitrate_1=
+;streammaxbitrate_1=
+;streamhidestats_1=
+;streamredirecturl_1=
+;streammovedurl_1=
+
+; -----------------------------------------------------------------------------
+; Premium HTTPS support
+; -----------------------------------------------------------------------------
+;sslCertificateFile=ssl.crt
+;sslCertificateKeyFile=key.pem
+;userid=
+;licenceid=
+
+; -----------------------------------------------------------------------------
+; SHOUTcast CDN support
+; cdn: blank, on, always or master
+; cdnmaster/cdnslave are stream-specific 0/1 overrides.
+; -----------------------------------------------------------------------------
+;cdn=
+;cdnmaster_1=0
+;cdnslave_1=0
+
+; -----------------------------------------------------------------------------
+; SHOUTcast directory (YP)
+; publicserver: default, always or never
+; -----------------------------------------------------------------------------
+;ypaddr=yp.shoutcast.com
+;ypport=80
+;yppath=/yp2
+;yptimeout=30
+;ypmaxretries=10
+;ypreportinterval=300
+;ypminreportinterval=10
+;publicserver=default
+
+; -----------------------------------------------------------------------------
+; Public statistics and history
+; hidestats: blank, stats or all
+; -----------------------------------------------------------------------------
+;hidestats=
+;redirecturl=
+;songhistory=20

@@ -1,0 +1,50 @@
+{
+  // Generated paths: "relative" or "absolute"
+  "pathMode": "relative",
+
+  // true scans subdirectories
+  "recursive": true,
+
+  // Shuffle once when generating the list
+  "shuffle": false,
+
+  // Supported extensions, case-insensitive
+  "extensions": [
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".aac",
+    ".m4a",
+    ".wav",
+    ".flac",
+    ".aif",
+    ".aiff",
+    ".wma",
+    ".webm"
+  ],
+
+  // Only universal is configured by default
+  // Duplicate this object to add another playlist
+  "playlists": [
+    {
+      // Letters, numbers, underscores and hyphens only
+      // Use this ID in autodj.config.json outputs[].playlists
+      "id": "universal",
+
+      // false keeps this playlist configured but inactive
+      "enabled": true,
+
+      // Directory containing the audio files
+      "directory": "playlists/universal",
+
+      // Generated .lst file, never a config or audio file
+      "outputFile": "playlists/universal.lst",
+
+      // Tracks per rotation round: 1-1000, used only with multiple playlists
+      // Anti-repeat takes priority when a playlist has no alternative
+      "weight": 1
+
+      // Optional local overrides: pathMode, recursive, shuffle, extensions
+    }
+  ]
+}
