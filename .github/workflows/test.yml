@@ -82,7 +82,7 @@ jobs:
           cpu: 2
           copyback: false
           prepare: |
-            pkg install -y node22 ocaml-opam ffmpeg pkgconf gmake git rsync m4 libffi ca_root_nss
+            pkg install -y node22 ocaml-opam ffmpeg pkgconf gmake git rsync m4 libffi libsysinfo ca_root_nss
             pw useradd radio-test -m -s /bin/sh
           run: |
             set -eu
