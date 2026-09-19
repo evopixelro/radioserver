@@ -80,7 +80,8 @@ async function checkReconnect(multipleStreams) {
     };
     const stopServer = async () => {
         sourceReady = false;
-        for (const socket of sockets) socket.destroy();
+        // Model an interrupted server, not a half-closed connection buffered by the OS.
+        for (const socket of sockets) if (!socket.destroyed) socket.resetAndDestroy();
         await Promise.all([
             new Promise((resolve) => source.close(resolve)),
             new Promise((resolve) => { admin.close(resolve); admin.closeAllConnections(); }),

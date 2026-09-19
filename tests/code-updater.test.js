@@ -27,7 +27,8 @@ function snapshot(overrides = {}, commit = "a".repeat(40)) {
 }
 
 function fixture(t) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-code-update-"));
+    // Match the updater's canonical paths, including macOS /var -> /private/var.
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "radio-code-update-")));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     t.mock.method(radio, "getStatus", () => ({ running: false }));
     t.mock.method(autodj, "status", () => ({ running: false }));

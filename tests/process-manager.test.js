@@ -117,7 +117,8 @@ if (process.platform === 'win32') {
 }
 process.once('message', () => {
   process.disconnect();
-  process.emit('SIGHUP');
+  if (process.platform === 'win32') process.emit('SIGHUP');
+  else process.kill(process.pid, 'SIGHUP');
 });
 require(${JSON.stringify(path.resolve(__dirname, "../server.js"))}).main(['run'])
   .then(() => process.send({ type: 'ready' }))
@@ -139,11 +140,8 @@ require(${JSON.stringify(path.resolve(__dirname, "../server.js"))}).main(['run']
     const { pid, running } = manager.getStatus(config);
     assert.equal(running, true);
     assert.equal(fs.existsSync(path.join(config.runDirectory, "control.lock")), false);
-    if (process.platform === "win32") controller.send("hangup");
-    else {
-        controller.disconnect();
-        controller.kill("SIGHUP");
-    }
+    // Let the child close its IPC channel before delivering the real Unix signal.
+    controller.send("hangup");
     const [code, signal] = await closed;
     assert.equal(signal, null, output);
     assert.equal(code, 0, output);
