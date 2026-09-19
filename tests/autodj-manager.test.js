@@ -308,6 +308,46 @@ test("invalid output playlist references preserve active playlists, script and s
     }
 });
 
+test("schedule configuration reaches preflight and final scripts", (context) => {
+    const { config } = runtimeFixture(context);
+    const configPath = path.join(config.serverRoot, "playlist.config.json");
+    const playlistConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const schedule = [{ days: ["monday", "friday"], start: "09:00", end: "21:00" }];
+    playlistConfig.playlists[0].schedule = schedule;
+    fs.writeFileSync(configPath, JSON.stringify(playlistConfig));
+    const checked = [];
+    context.mock.method(childProcess, "spawnSync", (binary, args) => {
+        if (args.includes("--version")) return { status: 0, stdout: "Liquidsoap 2.4.5" };
+        checked.push(fs.readFileSync(args.at(-1), "utf8"));
+        return { status: 0, stdout: "" };
+    });
+    for (const validationOnly of [true, false]) {
+        const result = prepareRuntime(config, { validationOnly });
+        assert.deepEqual(result.runtimeConfig.playlistSources[0].schedule, schedule);
+    }
+    const finalScript = fs.readFileSync(config.scriptPath, "utf8");
+    assert.equal(checked.length, 2);
+    for (const script of [...checked, finalScript]) {
+        assert.match(script, /schedules=\[\[\{start=540, stop=1260\}, \{start=6300, stop=7020\}\]\]/);
+    }
+});
+
+test("schedules fail preflight on old Liquidsoap without replacing active files", (context) => {
+    const { config } = runtimeFixture(context);
+    const configPath = path.join(config.serverRoot, "playlist.config.json");
+    const playlistConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    playlistConfig.playlists[0].schedule = [{ days: ["monday"], start: "09:00", end: "21:00" }];
+    fs.writeFileSync(configPath, JSON.stringify(playlistConfig));
+    const listPath = path.join(config.serverRoot, "playlists", "universal.lst");
+    fs.writeFileSync(listPath, "previous playlist\n");
+    fs.writeFileSync(config.scriptPath, "previous script\n");
+    for (const validationOnly of [true, false]) {
+        assert.throws(() => prepareRuntime(config, { validationOnly }), /schedules require Liquidsoap 2\.4\.5/);
+    }
+    assert.equal(fs.readFileSync(listPath, "utf8"), "previous playlist\n");
+    assert.equal(fs.readFileSync(config.scriptPath, "utf8"), "previous script\n");
+});
+
 test("doctor validation never replaces active playlists, scripts or logs", (context) => {
     const { config } = runtimeFixture(context);
     const playlist = path.join(config.serverRoot, "playlists", "universal.lst");
@@ -319,6 +359,24 @@ test("doctor validation never replaces active playlists, scripts or logs", (cont
     assert.equal(fs.readFileSync(config.scriptPath, "utf8"), "active script\n");
     assert.equal(fs.readFileSync(config.logPath, "utf8"), "Previous session\n");
     assert.equal(fs.existsSync(result.scriptPath), false);
+});
+
+test("unselected schedules do not raise the Liquidsoap requirement for regular outputs", (context) => {
+    const { config } = runtimeFixture(context);
+    const configPath = path.join(config.serverRoot, "playlist.config.json");
+    const playlistConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    playlistConfig.playlists.push({
+        id: "scheduled", directory: "playlists/universal", outputFile: "playlists/scheduled.lst",
+        schedule: [{ days: ["monday"], start: "09:00", end: "21:00" }],
+    });
+    fs.writeFileSync(configPath, JSON.stringify(playlistConfig));
+    fs.writeFileSync(config.configPath, JSON.stringify({
+        server: { password: "test-secret" },
+        outputs: [{ ...DEFAULT_CONFIG.outputs[0], playlists: ["universal"] }],
+    }));
+    const result = prepareRuntime(config);
+    assert.equal(result.runtimeConfig.playlistSources.length, 2);
+    assert.doesNotMatch(fs.readFileSync(config.scriptPath, "utf8"), /  schedules=/);
 });
 
 test("async AutoDJ spawn errors reject start without a success message or invalid PID", async (context) => {

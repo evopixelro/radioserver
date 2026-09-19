@@ -7,7 +7,7 @@ installation, playlists, process supervision, UTF-8 metadata and log retention.
 
 - Node.js `>=22.0.0`; use a maintained LTS release with current security patches
 - SHOUTcast DNAS built for the host OS and architecture
-- Liquidsoap >=2.2.5 with FFmpeg support and the configured audio codecs
+- Liquidsoap >=2.2.5 (>=2.4.5 for playlist schedules) with FFmpeg support and the configured audio codecs
 - FFmpeg on Linux, macOS and FreeBSD; included in the managed Windows Liquidsoap package
 - A dedicated service account with write access to the repository and its data directories
 
@@ -193,8 +193,8 @@ the source host, password and station settings.
 AutoDJ avoids consecutive tracks with the same filename, ignoring extension,
 case and equivalent Unicode forms. A different name is a different track, even
 if its audio is identical. Anti-repeat takes priority over weights; repetition
-is allowed only when no differently named playable track is available.
-Unplayable files are retried after a cooldown.
+is allowed only when no differently named playable track is available in the
+current playlist selection. Unplayable files are retried after a cooldown.
 
 AutoDJ regenerates playlists before starting. After adding tracks to existing
 libraries, run:
@@ -207,6 +207,61 @@ The default reload interval is 300 seconds. Reloading preserves queued audio
 and the last selected track name. Restart AutoDJ after changing output
 selections or adding/disabling libraries. Crossfade, normalization, playback
 mode and reload settings apply to every playback programme.
+
+### Playlist schedules
+
+Set `schedule` on a playlist in `playlist.config.json`. Scheduling requires
+Liquidsoap `>=2.4.5` on all supported platforms. This example runs Monday to
+Friday, 09:00–21:00:
+
+```json
+{
+  "id": "weekday",
+  "enabled": true,
+  "directory": "playlists/weekday",
+  "outputFile": "playlists/weekday.lst",
+  "weight": 1,
+  "schedule": [
+    {
+      "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+      "start": "09:00",
+      "end": "21:00"
+    }
+  ]
+}
+```
+
+Use lowercase day names from `monday` to `sunday`. Add entries to `schedule`
+for different hours on other days. To run for whole days, omit both times:
+`"schedule": [{ "days": ["saturday", "sunday"] }]`.
+
+When using times, supply both `start` and `end` in `HH:MM` format. The start is
+included and the end is excluded; `24:00` is allowed only as an end. An end
+earlier than the start continues into the next day: Friday 22:00–02:00 ends on
+Saturday. Times follow the server's local clock, including daylight-saving
+changes; skipped hours are skipped and repeated hours follow the schedule again.
+
+For consecutive playlists, use `start: "12:00", end: "13:00"` on one playlist
+and `start: "13:00", end: "24:00"` on the other, both with `days: ["friday"]`.
+At 13:00 AutoDJ finishes the current track before selecting from the second
+playlist. Overlapping scheduled playlists share playback according to their
+weights and anti-repeat rules; one does not override the other.
+
+Scheduled playlists take priority during their active hours. Otherwise, or if
+none has playable audio, AutoDJ uses playlists without `schedule` or with `[]`.
+Keep a regular playlist such as `universal` for these gaps. If nothing is
+available, AutoDJ outputs silence and retries. A playlist outside its scheduled
+hours is never used as fallback.
+
+Scheduled playback resolves tracks at each transition instead of prefetching.
+Slow or unreadable files can delay the next track. With crossfade enabled, the
+schedule is checked when the transition is prepared, before the audible end;
+use `crossfadeSeconds: 0` to check at the end of the track. Playback without
+schedules keeps its existing prefetch behavior.
+
+The output's `playlists` selection must include the scheduled and regular
+playlist IDs, or be empty to include all enabled playlists. Apply schedule
+changes with `npm run autodj:restart`; `npm run playlist` only updates track lists.
 
 ### Audio and metadata
 
@@ -376,7 +431,8 @@ from Git. No build step is required.
 
 Run `npm test` for unit and integration tests. Platform tests cover detection,
 command routing and installer decisions. Set `LIQUIDSOAP_TEST_BIN` to enable
-native tests against local test servers; `LIQUIDSOAP_TEST_RESOURCES` also tests
+native tests against local test servers (scheduled playback tests require
+Liquidsoap >=2.4.5); `LIQUIDSOAP_TEST_RESOURCES` also tests
 the relocated Linux standard library. Tests without a required native runtime
 are skipped. Test results do not replace deployment checks.
 

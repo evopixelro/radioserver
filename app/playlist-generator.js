@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { parseJsonWithComments } = require("./json-config");
 const { assertKnownKeys } = require("./config-validation");
+const { normaliseSchedule } = require("./playlist-schedule");
 
 const DEFAULT_EXTENSIONS = [
     ".mp3",
@@ -102,7 +103,7 @@ function normalisePlaylist(entry, index, shared, configDirectory) {
     if (!isPlainObject(entry)) {
         throw new Error(`${label} must be a JSON object.`);
     }
-    assertKnownKeys(entry, ["id", "enabled", "directory", "outputFile", "weight", "pathMode", "recursive", "shuffle", "extensions"], label);
+    assertKnownKeys(entry, ["id", "enabled", "directory", "outputFile", "weight", "schedule", "pathMode", "recursive", "shuffle", "extensions"], label);
 
     assertNonEmptyString(entry.id, `${label}.id`);
     if (!/^[a-zA-Z0-9_-]+$/.test(entry.id)) {
@@ -139,6 +140,7 @@ function normalisePlaylist(entry, index, shared, configDirectory) {
         directory: resolvePath(entry.directory, configDirectory),
         outputFile: resolvePath(entry.outputFile, configDirectory),
         weight,
+        schedule: normaliseSchedule(entry.schedule, `${label}.schedule`),
         ...options,
     };
 }

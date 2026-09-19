@@ -19,10 +19,10 @@ function parseVersion(value) {
     return match ? match.slice(1, 4).map((part) => Number(part || 0)) : null;
 }
 
-function versionIsSupported(version) {
-    for (let index = 0; index < MINIMUM_LIQUIDSOAP_VERSION.length; index += 1) {
-        if (version[index] > MINIMUM_LIQUIDSOAP_VERSION[index]) return true;
-        if (version[index] < MINIMUM_LIQUIDSOAP_VERSION[index]) return false;
+function versionIsSupported(version, minimum = MINIMUM_LIQUIDSOAP_VERSION) {
+    for (let index = 0; index < minimum.length; index += 1) {
+        if (version[index] > minimum[index]) return true;
+        if (version[index] < minimum[index]) return false;
     }
     return true;
 }
@@ -52,7 +52,7 @@ function binaryIsAPath(binary) {
     return path.isAbsolute(binary) || binary.includes("/") || binary.includes("\\");
 }
 
-function findBinary(config) {
+function findBinary(config, { scheduled = false } = {}) {
     const binary = binaryIsAPath(config.binaryPath)
         ? path.resolve(config.binaryPath)
         : config.binaryPath;
@@ -92,6 +92,9 @@ function findBinary(config) {
         throw new Error(
             `Liquidsoap ${version.join(".")} is too old; version ${MINIMUM_LIQUIDSOAP_VERSION.join(".")} or newer is required.`,
         );
+    }
+    if (scheduled && !versionIsSupported(version, [2, 4, 5])) {
+        throw new Error("Playlist schedules require Liquidsoap 2.4.5 or newer. Update Liquidsoap before enabling schedules.");
     }
     return binary;
 }
@@ -139,9 +142,12 @@ function prepareRuntime(config, { validationOnly = false } = {}) {
         stderrLogPath: path.join(config.logDirectory, "sc_serv.error.log"),
     }, config.logPath);
     if (!validationOnly) ensureDirectories(config);
-    const binary = findBinary(config);
     const runtimeConfig = loadConfiguration(config);
     const playlist = generatePlaylist({ serverRoot: config.serverRoot, dryRun: true });
+    const binary = findBinary(config, {
+        scheduled: playlist.playlists.some((item) => item.schedule.length > 0 && runtimeConfig.outputs.some((output) =>
+            output.enabled && (!output.playlists?.length || output.playlists.includes(item.id)))),
+    });
 
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "radio-preflight-"));
     try {
@@ -151,6 +157,7 @@ function prepareRuntime(config, { validationOnly = false } = {}) {
                 id: item.id,
                 playlistPath: path.join(temporary, `${item.id}.lst`),
                 weight: item.weight,
+                schedule: item.schedule,
             })),
         };
         playlist.playlists.forEach((item, index) => fs.writeFileSync(preparedConfig.playlistSources[index].playlistPath,
@@ -161,7 +168,7 @@ function prepareRuntime(config, { validationOnly = false } = {}) {
         checkScript(binary, scriptPath, runtimeConfig.server.password);
         if (!validationOnly) {
             preparedConfig.playlistSources = playlist.playlists.map((item) => ({
-                id: item.id, playlistPath: item.outputFile, weight: item.weight,
+                id: item.id, playlistPath: item.outputFile, weight: item.weight, schedule: item.schedule,
             }));
             writePlaylists(playlist.playlists);
             liquidsoapConfig.writeScript(config.scriptPath, liquidsoapConfig.generateScript(preparedConfig));

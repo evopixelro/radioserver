@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -63,6 +65,23 @@ test("builds deterministic platform-specific runtime paths", () => {
         environment,
     );
     assert.match(liquidsoap.path, /windows-x64[\\/]liquidsoap\.exe$/);
+});
+
+test("32-bit SHOUTcast on Windows x64 resolves the shared 64-bit AutoDJ runtime", (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-windows-autodj-"));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const profile = resolveProfile("windows-x86", { platform: "win32", architecture: "x64" });
+    const executable = path.join(root, "bin", "liquidsoap", "windows-x64", "liquidsoap.exe");
+    fs.mkdirSync(path.dirname(executable), { recursive: true });
+    fs.writeFileSync(executable, "Mock runtime: not executed");
+    // The host architecture controls whether a Windows x64 engine is a valid candidate.
+    const descriptor = Object.getOwnPropertyDescriptor(process, "arch");
+    try {
+        Object.defineProperty(process, "arch", { value: "x64" });
+        const resolved = resolveLiquidsoapBinary(root, profile, { PATH: "" });
+        assert.equal(resolved.path, executable);
+        assert.equal(resolved.found, true);
+    } finally { Object.defineProperty(process, "arch", descriptor); }
 });
 
 for (const [host, family] of [["linux", "linux"], ["win32", "windows"], ["darwin", "macos"], ["freebsd", "freebsd"]]) {

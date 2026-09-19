@@ -43,6 +43,29 @@ test("configuration template contains only universal", () => {
     assert.equal(config.playlists[0].id, "universal");
     assert.equal(config.playlists[0].directory, path.join(serverRoot, "playlists", "universal"));
     assert.equal(config.playlists[0].outputFile, path.join(serverRoot, "playlists", "universal.lst"));
+    assert.deepEqual(config.playlists[0].schedule, []);
+});
+
+test("playlist generation preserves schedules and validates disabled playlists too", (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-schedule-config-"));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(root, "audio"));
+    fs.writeFileSync(path.join(root, "audio", "track.mp3"), "audio");
+    const schedule = [{ days: ["monday", "friday"], start: "09:00", end: "21:00" }];
+    const entry = { id: "workday", directory: "audio", outputFile: "workday.lst", schedule };
+    const configPath = path.join(root, "playlist.config.json");
+    fs.writeFileSync(configPath, JSON.stringify({ playlists: [entry] }));
+    assert.deepEqual(loadPlaylistConfig({ serverRoot: root }).playlists[0].schedule, schedule);
+    assert.deepEqual(generatePlaylist({ serverRoot: root, dryRun: true }).playlists[0].schedule, schedule);
+    fs.writeFileSync(configPath, JSON.stringify({ playlists: [entry, {
+        ...entry, id: "disabled", outputFile: "disabled.lst", enabled: false,
+        schedule: [{ ...schedule[0], days: ["invalid"] }],
+    }] }));
+    assert.throws(() => loadPlaylistConfig({ serverRoot: root }), /playlists\[1\]\.schedule\[0\]\.days/);
+    fs.writeFileSync(configPath, JSON.stringify({ playlists: [{ ...entry, schedule: [{ days: ["monday", "friday"] }] }] }));
+    const fullDays = [{ days: ["monday", "friday"], start: "00:00", end: "24:00" }];
+    assert.deepEqual(loadPlaylistConfig({ serverRoot: root }).playlists[0].schedule, fullDays);
+    assert.deepEqual(generatePlaylist({ serverRoot: root, dryRun: true }).playlists[0].schedule, fullDays);
 });
 
 test("playlist outputs cannot alias the same destination through different directories", (context) => {

@@ -28,6 +28,46 @@ function createConfig(overrides = {}) {
     };
 }
 
+test("renders schedules in output selection order and does not schedule unrelated outputs", () => {
+    const config = createConfig();
+    config.playlistSources.push({
+        id: "weekend", playlistPath: "/srv/weekend.lst", weight: 2,
+        schedule: [{ days: ["sunday"], start: "22:00", end: "02:00" }],
+    });
+    config.outputs[0].playlists = ["weekend", "universal"];
+    config.outputs.push({ ...config.outputs[0], id: "regular", streamId: 2, playlists: ["universal"] });
+    const script = generateScript(config);
+    const first = script.slice(script.indexOf("program_0 = radio_program("), script.indexOf("program_0 = metadata.map("));
+    const second = script.slice(script.indexOf("program_1 = radio_program("), script.indexOf("program_1 = metadata.map("));
+    assert.match(first, /schedules=\[\[\{start=0, stop=120\}, \{start=9960, stop=10080\}\], \[\]\]/);
+    assert.match(first, /weekend\.lst.*weight=2.*universal\.lst.*weight=1/);
+    assert.doesNotMatch(second, /schedules=/);
+    assert.doesNotMatch(second, /weekend\.lst/);
+    assert.match(script, /synchronous=has_schedule, available=can_fetch/);
+    assert.match(script, /not has_schedule or not null\.defined\(s\.current\(\)\)/);
+    // A zero delay recursively retries forever in Liquidsoap's synchronous feeder.
+    const retry = /retry_delay=\{if can_fetch\(\) then ([\d.]+) else ([\d.]+) end\}/.exec(script);
+    assert.ok(retry);
+    assert.equal(Number(retry[1]), 2);
+    assert.ok(Number(retry[2]) > 0 && Number(retry[2]) <= 0.01);
+});
+
+test("renders full-day schedules and consecutive windows for separate playlists", () => {
+    const config = createConfig();
+    config.playlistSources.push(
+        { id: "weekend", playlistPath: "/srv/weekend.lst", weight: 1, schedule: [{ days: ["saturday", "sunday"] }] },
+        { id: "lunch", playlistPath: "/srv/lunch.lst", weight: 1, schedule: [{ days: ["friday"], start: "12:00", end: "13:00" }] },
+        { id: "afternoon", playlistPath: "/srv/afternoon.lst", weight: 1, schedule: [{ days: ["friday"], start: "13:00", end: "24:00" }] },
+    );
+    assert.match(generateScript(config), /schedules=\[\[\], \[\{start=7200, stop=10080\}\], \[\{start=6480, stop=6540\}\], \[\{start=6540, stop=7200\}\]\]/);
+});
+
+test("script generation rejects malformed schedules instead of silently ignoring them", () => {
+    const config = createConfig();
+    config.playlistSources[0].schedule = [{ days: ["monday"], start: "9:00", end: "21:00" }];
+    assert.throws(() => generateScript(config), /playlistSources\[0\]\.schedule\[0\]\.start/);
+});
+
 test("generates a SHOUTcast MP3 320 kbps / 48 kHz output", () => {
     const script = generateScript(createConfig());
 

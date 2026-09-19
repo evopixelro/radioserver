@@ -42,7 +42,16 @@
 
       // Tracks per rotation round: 1-1000, used only with multiple playlists
       // Anti-repeat takes priority when a playlist has no alternative
-      "weight": 1
+      "weight": 1,
+
+      // Optional weekly windows in the server's local time (Liquidsoap >=2.4.5)
+      // [] or omitted = regular playlist, used outside scheduled windows
+      // Example: [{ "days": ["monday", "tuesday", "wednesday", "thursday", "friday"], "start": "09:00", "end": "21:00" }]
+      // Omit both times for full days: [{ "days": ["saturday", "sunday"] }]
+      // If using times, specify both start and end (24:00 is allowed only as end)
+      // Multiple windows are allowed; an end before start continues into the next day
+      // A scheduled playlist takes priority; the current track finishes before switching
+      "schedule": []
 
       // Optional local overrides: pathMode, recursive, shuffle, extensions
     }
