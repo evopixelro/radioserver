@@ -119,6 +119,7 @@ async function checkReconnect(multipleStreams) {
         }
         fs.writeFileSync(path.join(root, "autodj.config.json"), JSON.stringify({
             ...DEFAULT_CONFIG, playlistMode: "normal",
+            logging: { ...DEFAULT_CONFIG.logging, level: 4 },
             server: { ...DEFAULT_CONFIG.server, host: address, port, password: sourcePassword, public: false },
             outputs: (multipleStreams ? [["universal"], ["pop"], []] : [[]]).map((playlists, index) => ({
                 ...DEFAULT_CONFIG.outputs[0], id: `output_${index}`, streamId: index + 1, playlists,
@@ -158,7 +159,9 @@ async function checkReconnect(multipleStreams) {
         await once(admin, "listening");
         source.listen(port + 1, address);
         await once(source, "listening");
-        await waitFor(() => connections >= expectedTitles.size * 2, "Liquidsoap did not reconnect");
+        // Liquidsoap permits a 30-second network timeout before retrying; allow
+        // that timeout to elapse on hosts that do not detect the reset immediately.
+        await waitFor(() => connections >= expectedTitles.size * 2, "Liquidsoap did not reconnect", 60000);
         await waitFor(() => titlesMatch() && [...expectedTitles.keys()].every((id) => confirmedBySupervisor.has(id)),
             "The original titles were not restored to their own streams after restart");
         for (const [id, expected] of expectedTitles) {
@@ -184,6 +187,6 @@ async function checkReconnect(multipleStreams) {
 for (const multipleStreams of [false, true]) {
     test(`the real AutoDJ supervisor restores ${multipleStreams ? "independent stream titles" : "the same track"} after a destip-bound DNAS restart`, {
         skip: !binary && "Set LIQUIDSOAP_TEST_BIN to test real AutoDJ reconnection",
-        timeout: 60000,
+        timeout: 120000,
     }, () => checkReconnect(multipleStreams));
 }
