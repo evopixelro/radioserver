@@ -95,7 +95,7 @@ test("real Liquidsoap switches after the current track and respects weights, sch
             lines.push(`  schedule_time=${name}_clock, schedules=[${entry.lists.map((list) => list[2]).join(", ")}],`);
             lines.push(`  [${entry.lists.map(([uri, weight]) => `{uri=${JSON.stringify(uri)}, weight=${weight}}`).join(", ")}])`);
             lines.push(`def ${name}_track(m) =`);
-            lines.push(`  print("[SCHEDULE:${entry.id}] " ^ json.stringify(compact=true, {song=m["song"], audio_time=source.time(${name})}))`);
+            lines.push(`  print(newline=false, "[SCHEDULE:${entry.id}] " ^ json.stringify(compact=true, {song=m["song"], audio_time=source.time(${name})}) ^ "\\n")`);
             lines.push(`  ref.incr(${name}_count)`);
             if (entry.id === "boundary") {
                 // Change the injected clock while the one-second track is still playing.
@@ -132,7 +132,8 @@ test("real Liquidsoap switches after the current track and respects weights, sch
                 for (const row of rows) {
                     const match = /^\[SCHEDULE:(\w+)\] (.+)$/.exec(row);
                     if (!match) continue;
-                    const event = JSON.parse(match[2]);
+                    let event;
+                    try { event = JSON.parse(match[2]); } catch (error) { reject(error); return; }
                     histories.get(match[1]).push(event.song);
                     if (match[1] === "boundary") times.push(event.audio_time);
                 }

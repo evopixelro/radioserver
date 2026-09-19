@@ -73,7 +73,7 @@ test("real Liquidsoap prevents adjacent names across modes, weights, reloads and
         lines.push(`${variable} = radio_program(id=${JSON.stringify(entry.id)}, mode=${JSON.stringify(entry.mode)}, reload=1, [${entry.lists.map(([uri, weight]) => `{uri=${JSON.stringify(uri)}, weight=${weight}}`).join(", ")}])`);
         if (entry.crossfade) lines.push(`${variable} = crossfade(duration=0.1, ${variable})`);
         const callback = `${variable}.${entry.crossfade ? "on_metadata" : "on_track"}`;
-        const handler = `fun (m) -> print("[ANTI_REPEAT:${entry.id}] " ^ json.stringify(compact=true, m["song"]))`;
+        const handler = `fun (m) -> print(newline=false, "[ANTI_REPEAT:${entry.id}] " ^ json.stringify(compact=true, m["song"]) ^ "\\n")`;
         lines.push("%ifversion >= 2.4", `${callback}(synchronous=true, ${handler})`, "%else", `${callback}(${handler})`, "%endif");
         lines.push(`output.dummy(fallible=true, ${variable})`);
     }
@@ -90,7 +90,9 @@ test("real Liquidsoap prevents adjacent names across modes, weights, reloads and
                 for (const row of rows) {
                     const match = /^\[ANTI_REPEAT:(\w+)\] (.+)$/.exec(row);
                     if (!match) continue;
-                    histories.get(match[1]).push(JSON.parse(match[2]));
+                    let title;
+                    try { title = JSON.parse(match[2]); } catch (error) { reject(error); return; }
+                    histories.get(match[1]).push(title);
                     if (match[1] === "reload" && histories.get("reload").length === 3 && !edited) {
                         edited = true;
                         writeList("reloaded", [b, a]);
