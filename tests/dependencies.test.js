@@ -8,7 +8,6 @@ const {
     activateRuntime,
     extractLinuxPackage,
     getDependencyStatus,
-    getLinuxInstallPlan,
     installDependencies,
     parseOsRelease,
     preflightInstall,
@@ -62,6 +61,7 @@ test("extracts the complete Linux runtime without installing a system package", 
                     assert.equal(fs.readFileSync(args[1], "utf8"), "library");
                     return { ok: true };
                 },
+                verify: () => {},
             },
         );
         assert.equal(
@@ -232,19 +232,8 @@ test("Ubuntu Jammy preflight tolerates an invalid local runtime manifest", (cont
     }
 });
 
-test("Linux update refreshes a dpkg-managed Liquidsoap installation", () => {
+test("Linux preflight accepts a dpkg-managed Liquidsoap installation", () => {
     const existing = { found: true, path: "/usr/bin/liquidsoap", source: "PATH" };
-    assert.deepEqual(
-        getLinuxInstallPlan({
-            existing,
-            force: true,
-            missing: [],
-            systemPackageInstalled: true,
-        }),
-        {
-            externallyManagedLiquidsoap: false,
-        },
-    );
     assert.doesNotThrow(
         () => preflightInstall({
             runtimeProfile: { family: "linux", architecture: "x64", id: "linux-x64" },
@@ -256,20 +245,6 @@ test("Linux update refreshes a dpkg-managed Liquidsoap installation", () => {
             force: true,
             userId: 1000,
         }),
-    );
-});
-
-test("Linux update preserves an externally managed Liquidsoap installation", () => {
-    assert.deepEqual(
-        getLinuxInstallPlan({
-            existing: { found: true, path: "/opt/opam/bin/liquidsoap", source: "PATH" },
-            force: true,
-            missing: [],
-            systemPackageInstalled: false,
-        }),
-        {
-            externallyManagedLiquidsoap: true,
-        },
     );
 });
 
@@ -309,6 +284,7 @@ for (const valid of [false, true]) {
                     return { status: 0 };
                 },
                 validate: () => ({ ok: true }),
+                verify: () => {},
             },
         );
         if (valid) assert.equal(install(), binary);
@@ -334,6 +310,9 @@ for (const family of ["macos", "freebsd"]) {
                 context.mock.method(console, "log", () => {});
                 context.mock.method(require("../app/platform"), "resolveProfile", () => profile);
                 context.mock.method(require("../app/platform"), "resolveLiquidsoapBinary", () => existing);
+                context.mock.method(require("../app/liquidsoap-releases"), "latestRelease", async () => ({ version: "2.4.5", tag_name: "v2.4.5", assets: [] }));
+                context.mock.method(require("../app/liquidsoap-runtime"), "checkVersion", () => "2.4.5");
+                context.mock.method(require("../app/liquidsoap-runtime"), "checkRuntime", () => ({ ok: true }));
                 context.mock.method(require("../app/download"), "downloadVerified", () => assert.fail("must not download a replacement"));
                 assert.doesNotThrow(() => preflightInstall({
                     runtimeProfile: profile, existingBinary: existing, dependencyStatus: { missing: [] },

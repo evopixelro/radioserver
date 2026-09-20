@@ -17,43 +17,47 @@ function compareVersions(left, right) {
     return 0;
 }
 
-function selectRelease(releases, target, knownPackages = []) {
+function newestRelease(releases) {
     const stable = releases.filter((release) =>
         !release.draft && !release.prerelease && versionParts(release.tag_name) &&
         compareVersions(release.tag_name, "2.2.5") >= 0,
     ).sort((a, b) => compareVersions(b.tag_name, a.tag_name));
-    for (const release of stable) {
-        const version = versionParts(release.tag_name).join(".");
-        const architecture = { x64: "amd64", arm64: "arm64", x86: "i386" }[target.architecture];
-        const assets = (release.assets || []).filter((asset) => {
-            if (target.family === "windows") return asset.name === `liquidsoap-${version}-win64.zip`;
-            const prefix = `liquidsoap_${version}-${target.distribution}-${target.codename}-`;
-            return architecture && asset.name.startsWith(prefix) &&
-                asset.name.endsWith(`_${architecture}.deb`) &&
-                /^[a-zA-Z0-9_.-]+$/.test(asset.name);
-        }).sort((a, b) => {
-            const preferred = Number(b.name.includes("ocaml4.")) - Number(a.name.includes("ocaml4."));
-            return preferred || b.name.localeCompare(a.name, "en", { numeric: true });
-        });
-        if (!assets.length) continue;
-        const asset = assets[0];
-        if (!asset.browser_download_url.startsWith(ASSET_PREFIX)) {
-            throw new Error("Liquidsoap release asset does not use the official distribution URL.");
-        }
-        const known = knownPackages.find((item) => item.url === asset.browser_download_url);
-        const sha256 = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || "")?.[1].toLowerCase() || known?.sha256;
-        if (!sha256) {
-            throw new Error(`Official Liquidsoap ${version} asset has no published SHA-256: ${asset.name}.`);
-        }
-        return {
-            version, fileName: asset.name, url: asset.browser_download_url, sha256,
-            directoryName: target.family === "windows" ? `liquidsoap-${version}-win64` : undefined,
-        };
-    }
-    return null;
+    if (!stable.length) throw new Error("No stable official Liquidsoap release was found.");
+    return stable[0];
 }
 
-async function latestPackage(target, serverRoot, knownPackages, fetchImplementation = globalThis.fetch) {
+function selectRelease(releases, target, knownPackages = []) {
+    const release = newestRelease(releases);
+    const version = versionParts(release.tag_name).join(".");
+    const architecture = { x64: "amd64", arm64: "arm64", x86: "i386" }[target.architecture];
+    const assets = (release.assets || []).filter((asset) => {
+        if (target.family === "windows") return target.architecture === "x64" && asset.name === `liquidsoap-${version}-win64.zip`;
+        if (target.family !== "linux") return false;
+        const prefix = `liquidsoap_${version}-${target.distribution}-${target.codename}-`;
+        return architecture && asset.name.startsWith(prefix) &&
+            asset.name.endsWith(`_${architecture}.deb`) &&
+            /^[a-zA-Z0-9_.-]+$/.test(asset.name);
+    }).sort((a, b) => {
+        const preferred = Number(b.name.includes("ocaml4.")) - Number(a.name.includes("ocaml4."));
+        return preferred || b.name.localeCompare(a.name, "en", { numeric: true });
+    });
+    if (!assets.length) return null;
+    const asset = assets[0];
+    if (asset.browser_download_url !== `${ASSET_PREFIX}${release.tag_name}/${asset.name}`) {
+        throw new Error("Liquidsoap release asset does not use the official distribution URL.");
+    }
+    const known = knownPackages.find((item) => item.url === asset.browser_download_url);
+    const sha256 = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || "")?.[1].toLowerCase() || known?.sha256;
+    if (!sha256) {
+        throw new Error(`Official Liquidsoap ${version} asset has no published SHA-256: ${asset.name}.`);
+    }
+    return {
+        version, fileName: asset.name, url: asset.browser_download_url, sha256,
+        directoryName: target.family === "windows" ? `liquidsoap-${version}-win64` : undefined,
+    };
+}
+
+async function latestRelease(fetchImplementation = globalThis.fetch) {
     const catalogue = [];
     for (let page = 1; page <= 10; page += 1) {
         const response = await fetchImplementation(`${RELEASES_API}?per_page=100&page=${page}`, {
@@ -65,16 +69,23 @@ async function latestPackage(target, serverRoot, knownPackages, fetchImplementat
         if (!Array.isArray(releases)) throw new Error("Invalid Liquidsoap release response.");
         catalogue.push(...releases);
         if (releases.length < 100) {
-            const selected = selectRelease(catalogue, target, knownPackages);
-            if (selected) return {
-                ...selected,
-                filePath: path.join(serverRoot, "bin", "downloads", "liquidsoap", selected.fileName),
-            };
-            break;
+            const release = newestRelease(catalogue);
+            return { ...release, version: versionParts(release.tag_name).join(".") };
         }
         if (page === 10) throw new Error("Official Liquidsoap release catalogue exceeds the pagination limit; refusing to claim a partially checked version is latest.");
     }
-    throw new Error(`No stable official Liquidsoap package matches ${target.family}/${target.distribution || ""}/${target.codename || ""}/${target.architecture}.`);
 }
 
-module.exports = { compareVersions, latestPackage, selectRelease };
+function packageForRelease(release, target, serverRoot, knownPackages = []) {
+    const selected = selectRelease([release], target, knownPackages);
+    return selected && { ...selected, filePath: path.join(serverRoot, "bin", "downloads", "liquidsoap", selected.fileName) };
+}
+
+async function latestPackage(target, serverRoot, knownPackages, fetchImplementation = globalThis.fetch) {
+    const release = await latestRelease(fetchImplementation);
+    const selected = packageForRelease(release, target, serverRoot, knownPackages);
+    if (selected) return selected;
+    throw new Error(`Liquidsoap ${release.version} has no official binary for ${target.family}/${target.distribution || ""}/${target.codename || ""}/${target.architecture}. An older release will not be installed.`);
+}
+
+module.exports = { compareVersions, latestPackage, latestRelease, packageForRelease, selectRelease };

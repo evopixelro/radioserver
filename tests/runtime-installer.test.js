@@ -38,6 +38,8 @@ test("runtime update refreshes SHOUTcast and Liquidsoap AutoDJ", async (context)
         missing: [],
     }));
     const preflight = context.mock.method(dependencies, "preflightInstall", () => {});
+    const plan = { strategy: "binary", version: "2.4.5" };
+    context.mock.method(dependencies, "prepareInstall", async () => plan);
     const updateShoutcast = context.mock.method(shoutcast, "installShoutcast", async () => {});
     const updateLiquidsoap = context.mock.method(dependencies, "installDependencies", async () => {});
 
@@ -52,6 +54,7 @@ test("runtime update refreshes SHOUTcast and Liquidsoap AutoDJ", async (context)
     assert.deepEqual(updateLiquidsoap.mock.calls[0].arguments[0], {
         force: true,
         serverRoot,
+        plan,
     });
 });
 
@@ -89,10 +92,19 @@ function platformFixture(context, family, architecture, shoutcastFound) {
     }));
     return {
         preflight: context.mock.method(dependencies, "preflightInstall", () => {}),
+        plan: context.mock.method(dependencies, "prepareInstall", async () => ({ strategy: "external", version: "2.4.5" })),
         radio: context.mock.method(shoutcast, "installShoutcast", async () => {}),
         autodj: context.mock.method(dependencies, "installDependencies", async () => {}),
     };
 }
+
+test("latest Liquidsoap selection fails before SHOUTcast is replaced", async (context) => {
+    const fixture = platformFixture(context, "linux", "x64", true);
+    context.mock.method(dependencies, "prepareInstall", async () => { throw new Error("UPSTREAM_UNAVAILABLE"); });
+    await assert.rejects(installRuntime({ acceptLicense: true, force: true }), /UPSTREAM_UNAVAILABLE/);
+    assert.equal(fixture.radio.mock.callCount(), 0);
+    assert.equal(fixture.autodj.mock.callCount(), 0);
+});
 
 for (const family of ["linux", "windows", "macos", "freebsd"]) {
     test(`complete runtime installation accepts validated supplied binaries on ${family}`, async (context) => {

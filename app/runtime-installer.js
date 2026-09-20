@@ -85,8 +85,10 @@ async function installRuntime({
         runtimeProfile: status.runtimeProfile,
         serverRoot,
     });
+    const plan = await dependencies.prepareInstall({ force, serverRoot, runtimeProfile: status.runtimeProfile,
+        existingBinary: status.dependencyStatus.liquidsoap });
     await shoutcast.installShoutcast({ acceptLicense, force: force || repairShoutcast, serverRoot });
-    await dependencies.installDependencies({ force, serverRoot });
+    await dependencies.installDependencies({ force, serverRoot, plan });
     console.log(force ? "Managed runtime update completed." : "Runtime installation completed.");
 }
 

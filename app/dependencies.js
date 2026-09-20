@@ -7,6 +7,7 @@ const download = require("./download");
 const platform = require("./platform");
 const liquidsoapRuntime = require("./liquidsoap-runtime");
 const releases = require("./liquidsoap-releases");
+const opam = require("./liquidsoap-opam");
 const systemDependencies = require("./system-dependencies");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
@@ -80,18 +81,6 @@ function debianPackageOwnsBinary(binary, run = spawnSync) {
     return !result.error && result.status === 0 && /^liquidsoap(?::[^:\s]+)?:\s/m.test(result.stdout || "");
 }
 
-function getLinuxInstallPlan({ existing, systemPackageInstalled }) {
-    const externallyManagedLiquidsoap =
-        existing.found &&
-        (
-            existing.source === "LIQUIDSOAP_BIN" ||
-            (existing.source === "PATH" && !systemPackageInstalled)
-        );
-    return {
-        externallyManagedLiquidsoap,
-    };
-}
-
 function parseOsRelease(content) {
     const values = {};
     for (const line of String(content).split(/\r?\n/)) {
@@ -139,6 +128,7 @@ function activateRuntime(stagingRoot, runtimeRoot) {
 function extractLinuxPackage(packageInfo, serverRoot, runtimeProfile, {
     run = spawnSync,
     validate = liquidsoapRuntime.checkRuntime,
+    verify = liquidsoapRuntime.checkVersion,
 } = {}) {
     verifyPackage(packageInfo);
     const parent = path.join(serverRoot, "bin", "liquidsoap");
@@ -175,6 +165,7 @@ function extractLinuxPackage(packageInfo, serverRoot, runtimeProfile, {
             }
             throw new Error(`The extracted Liquidsoap runtime failed validation: ${check.detail}`);
         }
+        verify(binary, packageInfo.version);
         activateRuntime(stagingRoot, runtimeRoot);
         const installedBinary = path.join(runtimeRoot, "usr", "bin", "liquidsoap");
         console.log(`Liquidsoap and its standard library installed locally: ${installedBinary}`);
@@ -297,15 +288,6 @@ function preflightInstall({
     }
 
     if (profile.family === "linux") {
-        const isDebian = debianFamily ?? isDebianFamily();
-        if (!isDebian) {
-            if (existing.found && !status.missing.includes("liquidsoap")) return;
-            throw new Error(
-                "No verified direct package matches this Linux distribution. " +
-                    "Install Liquidsoap with the system package manager or OPAM, then set LIQUIDSOAP_BIN.",
-            );
-        }
-
         return;
     }
 
@@ -313,13 +295,10 @@ function preflightInstall({
         if (status.missing.includes("liquidsoap")) throw new Error(`Supplied Liquidsoap failed validation: ${existing.path}. Repair it before installing runtimes.`);
         return;
     }
-    throw new Error(
-        `No official prebuilt Liquidsoap package is published for ${profile.id}. ` +
-            "Install it with OPAM (`opam install ffmpeg liquidsoap`) and set LIQUIDSOAP_BIN.",
-    );
+    // Source-build availability and the upstream version are checked before any downloads.
 }
 
-async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = false } = {}) {
+async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = false, packageInfo: selectedPackage } = {}) {
     const canUseX64 = process.arch === "x64" && runtimeProfile.family === "windows";
     if (runtimeProfile.architecture !== "x64" && !canUseX64) {
         throw new Error(
@@ -328,7 +307,7 @@ async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = fa
         );
     }
 
-    const packageInfo = await releases.latestPackage(
+    const packageInfo = selectedPackage || await releases.latestPackage(
         { family: "windows", architecture: "x64" }, serverRoot, [WINDOWS_LIQUIDSOAP_PACKAGE],
     );
     const installProfile = "windows-x64";
@@ -338,6 +317,7 @@ async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = fa
     const installed = readRuntimeManifest(manifestPath);
     if (fs.existsSync(executablePath) && installed.sha256 === packageInfo.sha256 &&
             liquidsoapRuntime.checkRuntime(executablePath).ok && !force) {
+        liquidsoapRuntime.checkVersion(executablePath, packageInfo.version);
         console.log(`Liquidsoap is already installed: ${executablePath}`);
         return executablePath;
     }
@@ -355,6 +335,7 @@ async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = fa
                 systemDependencies.inspect(path.join(extractedRoot, "liquidsoap.exe"), { ...runtimeProfile, architecture: "x64" }, { detail: check.detail }));
             throw new Error(`Liquidsoap extraction or validation failed: ${result.error?.message || check?.detail || result.status}.`);
         }
+        liquidsoapRuntime.checkVersion(path.join(extractedRoot, "liquidsoap.exe"), packageInfo.version);
         fs.writeFileSync(path.join(extractedRoot, "runtime.json"), `${JSON.stringify({ version: packageInfo.version, sha256: packageInfo.sha256, url: packageInfo.url }, null, 2)}\n`);
         activateRuntime(extractedRoot, runtimeRoot);
     } finally {
@@ -364,47 +345,42 @@ async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = fa
     return executablePath;
 }
 
-async function installLinuxDependencies(serverRoot, runtimeProfile, { force = false } = {}) {
-    if (!isDebianFamily()) {
-        const existing = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile);
-        if (existing.found) {
-            console.log(`Liquidsoap is managed outside this repository: ${existing.path}`);
-            return existing.path;
+async function prepareInstall({
+    serverRoot = path.resolve(__dirname, ".."),
+    runtimeProfile = platform.resolveProfile(),
+    existingBinary = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile),
+    osRelease = runtimeProfile.family === "linux" ? readOsRelease() : {},
+    force = false,
+} = {}) {
+    const release = await releases.latestRelease();
+    if (releases.compareVersions(release.version, "2.4.5") < 0) {
+        throw new Error("The official release catalogue does not contain Liquidsoap 2.4.5 or newer; no runtime was changed.");
+    }
+    const base = { runtimeProfile, version: release.version };
+    if (existingBinary.source === "LIQUIDSOAP_BIN") {
+        if (!existingBinary.found) throw new Error(`LIQUIDSOAP_BIN is missing: ${existingBinary.path}`);
+        liquidsoapRuntime.checkVersion(existingBinary.path, release.version);
+        const check = liquidsoapRuntime.checkRuntime(existingBinary.path);
+        if (!check.ok) throw new Error(`Explicit Liquidsoap failed validation: ${check.detail}`);
+        return { ...base, strategy: "external", binary: existingBinary.path };
+    }
+    const target = { ...osRelease, ...runtimeProfile };
+    if (target.family === "windows" && target.architecture === "x86" && process.arch === "x64") target.architecture = "x64";
+    const packageInfo = releases.packageForRelease(release, target, serverRoot, [...LIQUIDSOAP_PACKAGES, WINDOWS_LIQUIDSOAP_PACKAGE]);
+    if (packageInfo) return { ...base, strategy: "binary", packageInfo };
+    const managed = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime.json"));
+    if (existingBinary.found && (!force || managed.method !== "opam")) {
+        try {
+            liquidsoapRuntime.checkVersion(existingBinary.path, release.version);
+            if (liquidsoapRuntime.checkRuntime(existingBinary.path).ok) {
+                return { ...base, strategy: "external", binary: existingBinary.path };
+            }
+        } catch {
+            // Old system binaries are left untouched; build a current private runtime instead.
         }
-        throw new Error(
-            "No verified direct package matches this Linux distribution. Install Liquidsoap with the system package manager or OPAM, then set LIQUIDSOAP_BIN.",
-        );
     }
-
-    const osRelease = readOsRelease();
-    const { missing } = getDependencyStatus({ serverRoot, runtimeProfile });
-    const existing = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile);
-    const systemPackageInstalled =
-        existing.found && existing.source === "PATH" && debianPackageIsInstalled("liquidsoap") && debianPackageOwnsBinary(existing.path);
-    const plan = getLinuxInstallPlan({
-        existing,
-        systemPackageInstalled,
-    });
-    if (plan.externallyManagedLiquidsoap) {
-        if (missing.includes("liquidsoap")) {
-            throw new Error(`Externally managed Liquidsoap is incomplete: ${existing.path}. Repair it or remove LIQUIDSOAP_BIN to use the local runtime.`);
-        }
-        console.log(`Liquidsoap is externally managed and was not modified: ${existing.path}`);
-        return existing.path;
-    }
-    const packageInfo = await releases.latestPackage(
-        { ...osRelease, ...runtimeProfile }, serverRoot, LIQUIDSOAP_PACKAGES,
-    );
-    console.log(`Latest compatible stable Liquidsoap: ${packageInfo.version} (${osRelease.distribution}/${osRelease.codename}).`);
-    const runtimeRoot = path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id);
-    const installed = readRuntimeManifest(path.join(runtimeRoot, "runtime.json"));
-    if (!force && installed.sha256 === packageInfo.sha256 && !missing.includes("liquidsoap")) {
-        console.log(`Liquidsoap is already up to date: ${existing.path}`);
-        return existing.path;
-    }
-    console.log(`Downloading ${packageInfo.fileName} from the official Liquidsoap release...`);
-    await download.downloadVerified({ ...packageInfo, force, label: packageInfo.fileName });
-    return extractLinuxPackage(packageInfo, serverRoot, runtimeProfile);
+    opam.prerequisites(runtimeProfile);
+    return { ...base, strategy: "source" };
 }
 
 function cachedDebianDepends(serverRoot, profile) {
@@ -419,33 +395,28 @@ function cachedDebianDepends(serverRoot, profile) {
     } catch { return ""; }
 }
 
-async function installDependencies({ force = false, serverRoot = path.resolve(__dirname, "..") } = {}) {
-    const runtimeProfile = platform.resolveProfile();
+async function installDependencies({ force = false, serverRoot = path.resolve(__dirname, ".."), plan } = {}) {
+    const selected = plan || await prepareInstall({ force, serverRoot });
+    const { runtimeProfile, version, packageInfo } = selected;
+    console.log(`Latest stable official Liquidsoap: ${version}.`);
+    if (selected.strategy === "external") {
+        console.log(`Verified Liquidsoap ${version}; external runtime was not modified: ${selected.binary}`);
+        return selected.binary;
+    }
+    if (selected.strategy === "source") {
+        console.log(`No official ${version} binary matches ${runtimeProfile.id}; building official sources in bin/liquidsoap with OPAM.`);
+        return opam.install(serverRoot, runtimeProfile, version, { activate: activateRuntime });
+    }
+    if (runtimeProfile.family === "windows") return installWindowsLiquidsoap(serverRoot, runtimeProfile, { force, packageInfo });
     const existing = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile);
-    if (
-        existing.found &&
-        ["PATH", "LIQUIDSOAP_BIN"].includes(existing.source) &&
-        runtimeProfile.family !== "linux"
-    ) {
-        console.log(
-            `Liquidsoap is managed outside this repository${force ? " and was not modified" : ""}: ${existing.path}`,
-        );
+    const installed = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime.json"));
+    if (!force && installed.sha256 === packageInfo.sha256 && existing.found && liquidsoapRuntime.checkRuntime(existing.path).ok) {
+        liquidsoapRuntime.checkVersion(existing.path, version);
+        console.log(`Liquidsoap is already up to date: ${existing.path}`);
         return existing.path;
     }
-    if (runtimeProfile.family === "windows") {
-        return installWindowsLiquidsoap(serverRoot, runtimeProfile, { force });
-    }
-    if (runtimeProfile.family === "linux") {
-        return installLinuxDependencies(serverRoot, runtimeProfile, { force });
-    }
-    if (existing.found) {
-        console.log(`Liquidsoap is managed outside this repository: ${existing.path}`);
-        return existing.path;
-    }
-    throw new Error(
-        `No official prebuilt Liquidsoap package is published for ${runtimeProfile.id}. ` +
-            "Install it with OPAM (`opam install ffmpeg liquidsoap`) and set LIQUIDSOAP_BIN.",
-    );
+    await download.downloadVerified({ ...packageInfo, force, label: packageInfo.fileName });
+    return extractLinuxPackage(packageInfo, serverRoot, runtimeProfile);
 }
 
 module.exports = {
@@ -456,10 +427,10 @@ module.exports = {
     debianPackageIsInstalled,
     debianPackageOwnsBinary,
     getDependencyStatus,
-    getLinuxInstallPlan,
     installDependencies,
     installWindowsLiquidsoap,
     parseOsRelease,
     preflightInstall,
+    prepareInstall,
     verifyPackage,
 };

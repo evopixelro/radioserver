@@ -12,19 +12,32 @@ function release(version, codename = "noble", options = {}) {
 }
 const target = { family: "linux", distribution: "ubuntu", codename: "noble", architecture: "x64" };
 
-test("selects the newest stable matching OS package and excludes rolling builds", () => {
+test("selects the newest stable global release and excludes rolling builds", () => {
     const result = selectRelease([
         release("2.4.5"), release("2.4.10"), release("3.0.0", "noble", { prerelease: true }),
-        release("4.0.0", "noble", { draft: true }), release("2.5.0", "jammy"),
+        release("4.0.0", "noble", { draft: true }),
         release("2.5.0", "noble", { tag_name: "rolling-release-v2.5.x" }),
     ], target);
     assert.equal(result.version, "2.4.10");
 });
 
-test("an older OS gets its newest compatible release, never another distribution's package", () => {
+test("an older OS cannot fall back to an obsolete release or another distribution's package", () => {
     const result = selectRelease([release("2.4.5"), release("2.2.5", "jammy")], { ...target, codename: "jammy" });
-    assert.equal(result.version, "2.2.5");
+    assert.equal(result, null);
     assert.equal(selectRelease([release("2.4.5")], { ...target, codename: "jammy" }), null);
+});
+
+test("a missing asset in the newest release cannot select an older Windows binary", () => {
+    const old = release("2.4.4", "noble", { assets: [{ name: "liquidsoap-2.4.4-win64.zip",
+        browser_download_url: "https://github.com/savonet/liquidsoap-release-assets/releases/download/v2.4.4/liquidsoap-2.4.4-win64.zip",
+        digest: `sha256:${"a".repeat(64)}` }] });
+    assert.equal(selectRelease([old, release("2.4.5")], { family: "windows", architecture: "x64" }), null);
+});
+
+test("missing latest binaries report their version without downloading an older build", async () => {
+    await assert.rejects(latestPackage({ ...target, codename: "jammy" }, process.cwd(), [], async () => ({
+        ok: true, json: async () => [release("2.4.5"), release("2.2.5", "jammy")],
+    })), /2\.4\.5.*no official binary.*older release will not be installed/);
 });
 
 test("unpublished checksums require an exact previously verified asset URL", () => {

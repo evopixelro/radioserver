@@ -20,13 +20,14 @@ stop commands remain available for recovery on older versions.
 
 | Platform | Runtime installation |
 | --- | --- |
-| Linux | SHOUTcast x64/x86 downloads; Liquidsoap packages for matching supported Debian/Ubuntu releases and architectures |
+| Linux | SHOUTcast x64/x86 downloads; latest official Liquidsoap package or a private OPAM source build |
 | Windows | SHOUTcast x64/x86 vendor installer; Liquidsoap x64 portable package |
-| macOS / FreeBSD | Externally supplied compatible SHOUTcast and Liquidsoap executables |
+| macOS / FreeBSD | Externally supplied compatible SHOUTcast; latest Liquidsoap built from official sources with OPAM |
 
-Other Linux distributions and native 32-bit Windows require a separate
-compatible Liquidsoap build. Debian/Ubuntu packages are selected for the exact
-distribution release, not reused across unrelated systems.
+Debian/Ubuntu packages are selected for the exact distribution release and
+architecture, not reused across unrelated systems. Missing packages use the
+source-build path on Unix. Native 32-bit Windows requires a separately supplied
+compatible Liquidsoap build; the installer does not substitute an older release.
 
 Both engines must work on the target host. macOS, Apple Silicon and FreeBSD
 require native validation of supplied binaries. The controller does not install
@@ -43,8 +44,8 @@ npm install
 npm run install
 ```
 
-`npm install` handles Node.js dependencies. `npm run install` downloads managed
-runtimes into `bin/`, including Liquidsoap's standard library, or validates
+`npm install` also runs the installation lifecycle script. `npm run install`
+downloads or builds managed runtimes into `bin/`, including Liquidsoap's standard library, or validates
 externally supplied runtimes. Active configurations stay in the repository root.
 
 The installer marks available requirements in green, missing requirements in
@@ -94,22 +95,33 @@ Unknown libraries or incompatible library versions require a matching vendor
 build; do not substitute DLLs or symlink incompatible library versions.
 
 On macOS and FreeBSD, supply a compatible licensed SHOUTcast executable.
-For Liquidsoap, follow the [OPAM installation guide](https://www.liquidsoap.info/doc-2.4.5/install#install-using-opam)
-and install `ffmpeg liquidsoap` in the service account's switch. FFmpeg on
-`PATH` alone does not enable Liquidsoap's codecs. Do not run OPAM as root.
+When no matching binary exists for the latest Liquidsoap release, the installer
+uses [OPAM](https://www.liquidsoap.info/doc-2.4.5/install#install-using-opam)
+to compile that exact version from the official release sources. Install OPAM,
+a C compiler, make (`gmake` on FreeBSD), `pkg-config`, and development libraries
+for FFmpeg, curl and libffi first. Further build prerequisites are reported by
+OPAM. FFmpeg on `PATH` alone does not provide the development libraries.
+
+Builds run as the service account in a private `bin/liquidsoap/opam` root, not
+the account's existing OPAM switches. They require additional time and disk
+space. Checksums remain enabled; system packages are never installed by the
+controller. A failed build leaves the previous active runtime in place.
+Keep the repository at the same absolute path after a source build; rebuild
+Liquidsoap if it is moved. Do not run OPAM as root.
 
 For a POSIX shell:
 
 ```bash
 export SC_SERV_BIN="/absolute/path/to/sc_serv"
-export LIQUIDSOAP_BIN="$(opam var bin)/liquidsoap"
 npm run install
 npm run doctor
 ```
 
-Keep the full OPAM switch and use the same environment in the service manager.
+To supply your own Liquidsoap instead, set `LIQUIDSOAP_BIN` explicitly and keep
+its full runtime and service environment. Installation verifies it against the
+latest stable release; an outdated override must be updated or unset.
 A manual DNAS binary can also reside at `bin/shoutcast/<os>-<arch>/sc_serv`.
-Mac/FreeBSD binaries remain externally managed, even inside `bin/`.
+Supplied SHOUTcast binaries remain externally managed, even inside `bin/`.
 
 ## Operation
 
@@ -373,10 +385,14 @@ npm start
 npm run autodj:start
 ```
 
-Both `install` and `update` check official downloads. Liquidsoap selects the
-newest stable package matching the OS release and architecture; this may lag
-upstream. Lookup failures stop the operation. `install` keeps a working matching
-runtime; `update` reinstalls it. Configs and playlists are preserved.
+Both `install` and `update` check the latest stable official Liquidsoap release
+before changing either runtime. Rolling and prerelease builds are excluded.
+A matching official binary is preferred; Unix hosts without one build the same
+version through OPAM. There is no fallback to an older release or a package
+for another distribution. Lookup or prerequisite failures stop the operation.
+`install` keeps a verified matching runtime; `update` reinstalls managed runtimes.
+The executable's reported version is checked before activation. Configs and
+playlists are preserved.
 
 Liquidsoap assets are checked against published SHA-256 digests or recorded
 checksums. SHOUTcast uses the official HTTPS distribution and a locally recorded
@@ -387,9 +403,10 @@ vendor's interactive installer. The two engine updates are separate operations,
 not one transaction. If Liquidsoap activation and restoration both fail, the
 previous runtime is kept outside staging; the error reports its recovery path.
 
-Runtimes supplied through `SC_SERV_BIN`/`LIQUIDSOAP_BIN`, manual Mac/FreeBSD
-binaries and OPAM installations are not upgraded. Update them through their
-original installation method. Missing overrides stop installation.
+Explicit `SC_SERV_BIN`/`LIQUIDSOAP_BIN` overrides are never overwritten. Missing
+overrides stop installation, and an outdated Liquidsoap override stops it with
+an update message. Without an override, old system or user OPAM binaries are
+left untouched while a current private runtime is installed in the project.
 
 Debian/Ubuntu package-owned Liquidsoap can migrate to `bin/`; its OS libraries
 remain external. After validating the local runtime, an old APT installation

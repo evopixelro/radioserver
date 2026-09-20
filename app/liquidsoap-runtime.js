@@ -43,4 +43,16 @@ function checkRuntime(binary, run = spawnSync) {
     }
 }
 
-module.exports = { checkRuntime, getArguments, getResources };
+function checkVersion(binary, expected, run = spawnSync) {
+    const result = run(binary, ["--version"], {
+        encoding: "utf8", timeout: 15000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    });
+    const reported = `${result.stdout || ""}\n${result.stderr || ""}`;
+    const version = /\bLiquidsoap\s+(\d+\.\d+\.\d+)(?:\+[^\s]+)?(?=\s|$)/i.exec(reported)?.[1];
+    if (result.error || result.status !== 0 || version !== expected) {
+        throw new Error(`Liquidsoap ${expected} is required by the latest official release, but ${binary} reports ${version || "an unreadable version"}. Explicit LIQUIDSOAP_BIN overrides must be updated through their original installation method, or unset to use the managed runtime.`);
+    }
+    return version;
+}
+
+module.exports = { checkRuntime, checkVersion, getArguments, getResources };
