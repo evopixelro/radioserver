@@ -499,6 +499,12 @@ Liquidsoap >=2.4.5); `LIQUIDSOAP_TEST_RESOURCES` also tests
 the relocated Linux standard library. Tests without a required native runtime
 are skipped. Test results do not replace deployment checks.
 
+GitHub Actions runs one job per test system: Ubuntu 22.04, Windows Server 2022,
+macOS 14, FreeBSD 14.4 and Fedora 44. Each job checks the managed runtime installer,
+the full test suite and repeated native playback regressions. FreeBSD and Fedora
+run in separate virtual machines. Ubuntu also checks that installing local FFmpeg
+leaves the distribution's FFmpeg 4.x unchanged.
+
 ### Environment
 
 | Variables | Purpose |
