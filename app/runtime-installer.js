@@ -145,7 +145,7 @@ function getInstallRequirements(status, plan, { run = spawnSync, systemRoot = pr
 
 async function installRuntime({
     acceptLicense = false,
-    force = false,
+    force = true,
     serverRoot = path.resolve(__dirname, ".."),
 } = {}) {
     const radio = require("./process-manager");
@@ -157,7 +157,7 @@ async function installRuntime({
     if (radio.getStatus(radioConfig).running || autodj.status(autodj.getConfig(serverRoot)).running) {
         throw new Error("Stop SHOUTcast and AutoDJ before installing or updating runtimes: npm run autodj:stop, then npm run stop.");
     }
-    console.log(force ? "Updating managed radio runtimes..." : "Installing radio runtimes...");
+    console.log(force ? "Installing or reinstalling managed radio runtimes..." : "Checking managed radio runtime updates...");
     const status = getRuntimeStatus(serverRoot);
     let plan;
     let ffmpegPlan;
@@ -171,8 +171,9 @@ async function installRuntime({
             throw new Error(`No current official SHOUTcast package is available for ${status.runtimeProfile.id}; the complete radio stack cannot be installed on this host. Supply a compatible licensed SHOUTcast executable through SC_SERV_BIN before installing AutoDJ, or use a platform supported by both engines.`);
         }
         // Select the exact installation path before requiring any source-build tools.
+        ffmpegPlan = await ffmpeg.prepare(serverRoot, status.runtimeProfile, { force });
         plan = await dependencies.prepareInstall({ force, serverRoot, runtimeProfile: status.runtimeProfile,
-            existingBinary: status.dependencyStatus.liquidsoap, validateSource: false });
+            existingBinary: status.dependencyStatus.liquidsoap, validateSource: false, ffmpegPlan });
         plan.managedFfmpeg = status.runtimeProfile.family !== "windows";
         status.systemRequirements = getInstallRequirements(status, plan);
         status.systemRequirements.managedFfmpeg = plan.managedFfmpeg;
@@ -182,7 +183,6 @@ async function installRuntime({
         if (archive.missing.length) {
             status.systemRequirements.error ||= `SHOUTcast extraction requires: ${archive.missing.join(", ")}. Install the missing tools and retry; no runtimes were replaced.`;
         }
-        ffmpegPlan = await ffmpeg.prepare(serverRoot, status.runtimeProfile);
         if (ffmpegPlan.strategy === "source") {
             const report = ffmpeg.inspectPrerequisites(status.runtimeProfile);
             status.systemRequirements.ffmpegItems = report.items;
@@ -210,7 +210,7 @@ async function installRuntime({
     const localFfmpeg = await ffmpeg.install(serverRoot, status.runtimeProfile, ffmpegPlan);
     await shoutcast.installShoutcast({ acceptLicense, force: force || repairShoutcast, serverRoot });
     await dependencies.installDependencies({ force, serverRoot, plan, ...(localFfmpeg ? { ffmpeg: localFfmpeg } : {}) });
-    console.log(force ? "Managed runtime update completed." : "Runtime installation completed.");
+    console.log(force ? "Runtime installation completed." : "Managed runtime update completed.");
 }
 
 module.exports = { getInstallRequirements, getRuntimeStatus, installRuntime, printRuntimeStatus };

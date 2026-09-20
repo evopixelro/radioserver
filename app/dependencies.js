@@ -181,6 +181,15 @@ function verifyPackage(packageInfo) {
     });
 }
 
+function isCurrentRuntime(binary, version) {
+    try {
+        liquidsoapRuntime.checkVersion(binary, version);
+        return liquidsoapRuntime.checkRuntime(binary).ok;
+    } catch {
+        return false;
+    }
+}
+
 function getDependencyStatus({
     serverRoot = path.resolve(__dirname, ".."),
     runtimeProfile = platform.resolveProfile(),
@@ -251,7 +260,7 @@ function preflightInstall({
     const nativeLibraries = status.nativeLibraries;
     const osRelease = releaseInfo || (profile.family === "linux" ? readOsRelease() : {});
     const installedUrl = profile.id
-        ? readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", profile.id, "runtime.json")).url : undefined;
+        ? readRuntimeManifest(path.join(liquidsoapRuntime.getManagedRoot(serverRoot, profile), "runtime.json")).url : undefined;
     const replaceForeignPackage = profile.family === "linux" && existing.source === "platform" &&
         osRelease.distribution && osRelease.codename && typeof installedUrl === "string" &&
         /liquidsoap_.*-(?:ubuntu|debian)-/.test(installedUrl) &&
@@ -323,9 +332,8 @@ async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = fa
     const executablePath = path.join(runtimeRoot, "liquidsoap.exe");
     const manifestPath = path.join(runtimeRoot, "runtime.json");
     const installed = readRuntimeManifest(manifestPath);
-    if (fs.existsSync(executablePath) && installed.sha256 === packageInfo.sha256 &&
-            liquidsoapRuntime.checkRuntime(executablePath).ok && !force) {
-        liquidsoapRuntime.checkVersion(executablePath, packageInfo.version);
+    if (!force && fs.existsSync(executablePath) && installed.sha256 === packageInfo.sha256 &&
+            isCurrentRuntime(executablePath, packageInfo.version)) {
         console.log(`Liquidsoap is already installed: ${executablePath}`);
         return executablePath;
     }
@@ -360,6 +368,7 @@ async function prepareInstall({
     osRelease = runtimeProfile.family === "linux" ? readOsRelease() : {},
     force = false,
     validateSource = true,
+    ffmpegPlan,
 } = {}) {
     const release = await releases.latestRelease();
     if (releases.compareVersions(release.version, "2.4.5") < 0) {
@@ -375,26 +384,34 @@ async function prepareInstall({
     }
     const target = { ...osRelease, ...runtimeProfile };
     if (target.family === "windows" && target.architecture === "x86" && process.arch === "x64") target.architecture = "x64";
-    const packageInfo = releases.packageForRelease(release, target, serverRoot, [...LIQUIDSOAP_PACKAGES, WINDOWS_LIQUIDSOAP_PACKAGE]);
-    if (packageInfo) return { ...base, strategy: "binary", packageInfo };
-    const managed = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime.json"));
-    if (existingBinary.found && (!force || managed.method !== "opam")) {
-        try {
-            liquidsoapRuntime.checkVersion(existingBinary.path, release.version);
-            if (liquidsoapRuntime.checkRuntime(existingBinary.path).ok) {
-                return { ...base, strategy: "external", binary: existingBinary.path };
-            }
-        } catch {
-            // Old system binaries are left untouched; build a current private runtime instead.
-        }
+    const managedRoot = liquidsoapRuntime.getManagedRoot(serverRoot, runtimeProfile);
+    const managed = readRuntimeManifest(path.join(managedRoot, "runtime.json"));
+    if (!force && existingBinary.found && existingBinary.source === "platform" && /^\d+\.\d+\.\d+$/.test(managed.version || "") &&
+            releases.compareVersions(managed.version, release.version) > 0) {
+        throw new Error(`Installed Liquidsoap ${managed.version} is newer than the official catalogue (${release.version}); refusing an automatic downgrade.`);
     }
+    const managedSource = managed.method === "opam" && existingBinary.source === "platform" &&
+        existingBinary.path === path.join(managedRoot, "liquidsoap");
+    const rebindFfmpeg = managedSource && (ffmpegPlan?.strategy === "source" ||
+        (ffmpegPlan?.current && managed.ffmpegPrefix !== ffmpegPlan.current.prefix));
+    const packageInfo = releases.packageForRelease(release, target, serverRoot, [...LIQUIDSOAP_PACKAGES, WINDOWS_LIQUIDSOAP_PACKAGE]);
+    if (packageInfo && !force && existingBinary.found && existingBinary.source === "platform" &&
+            managed.sha256 === packageInfo.sha256 && isCurrentRuntime(existingBinary.path, release.version)) {
+        return { ...base, strategy: "existing", binary: existingBinary.path };
+    }
+    // Keep a working current source build even if upstream now also provides a binary.
+    if (existingBinary.found && (!packageInfo || managedSource) && !rebindFfmpeg && (!force || !managedSource) &&
+            isCurrentRuntime(existingBinary.path, release.version)) {
+        return { ...base, strategy: managedSource ? "existing" : "external", binary: existingBinary.path };
+    }
+    if (packageInfo) return { ...base, strategy: "binary", packageInfo };
     if (validateSource) opam.prerequisites(runtimeProfile);
     return { ...base, strategy: "source" };
 }
 
 function cachedDebianDepends(serverRoot, profile) {
     try {
-        const manifest = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", profile.id, "runtime.json"));
+        const manifest = readRuntimeManifest(path.join(liquidsoapRuntime.getManagedRoot(serverRoot, profile), "runtime.json"));
         const fileName = path.basename(new URL(manifest.url).pathname);
         if (!fileName.endsWith(".deb")) return "";
         const filePath = path.join(serverRoot, "bin", "downloads", "liquidsoap", fileName);
@@ -408,11 +425,13 @@ async function installDependencies({ force = false, serverRoot = path.resolve(__
     const selected = plan || await prepareInstall({ force, serverRoot });
     const { runtimeProfile, version, packageInfo } = selected;
     console.log(`Latest stable official Liquidsoap: ${version}.`);
-    const previous = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime.json"));
+    const managedRoot = liquidsoapRuntime.getManagedRoot(serverRoot, runtimeProfile);
+    const previous = readRuntimeManifest(path.join(managedRoot, "runtime.json"));
     const rebindFfmpeg = ffmpeg && previous.method === "opam" && previous.ffmpegPrefix !== ffmpeg.prefix &&
-        selected.binary === path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "liquidsoap");
-    if (selected.strategy === "external" && !rebindFfmpeg) {
-        console.log(`Verified Liquidsoap ${version}; external runtime was not modified: ${selected.binary}`);
+        selected.binary === path.join(managedRoot, "liquidsoap");
+    if (["existing", "external"].includes(selected.strategy) && !rebindFfmpeg) {
+        console.log(selected.strategy === "existing" ? `Liquidsoap is already up to date: ${selected.binary}` :
+            `Verified Liquidsoap ${version}; external runtime was not modified: ${selected.binary}`);
         return selected.binary;
     }
     if (selected.strategy === "source" || rebindFfmpeg) {
@@ -421,9 +440,8 @@ async function installDependencies({ force = false, serverRoot = path.resolve(__
     }
     if (runtimeProfile.family === "windows") return installWindowsLiquidsoap(serverRoot, runtimeProfile, { force, packageInfo });
     const existing = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile);
-    const installed = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime.json"));
-    if (!force && installed.sha256 === packageInfo.sha256 && existing.found && liquidsoapRuntime.checkRuntime(existing.path).ok) {
-        liquidsoapRuntime.checkVersion(existing.path, version);
+    const installed = readRuntimeManifest(path.join(managedRoot, "runtime.json"));
+    if (!force && installed.sha256 === packageInfo.sha256 && existing.found && isCurrentRuntime(existing.path, version)) {
         console.log(`Liquidsoap is already up to date: ${existing.path}`);
         return existing.path;
     }

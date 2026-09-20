@@ -12,6 +12,16 @@ function stableVersion(value) {
     return /^[78]\.\d+(?:\.\d+)?$/.test(value || "");
 }
 
+function compareVersions(left, right) {
+    const a = left.split(".").map(Number);
+    const b = right.split(".").map(Number);
+    for (let index = 0; index < 3; index += 1) {
+        const difference = (a[index] || 0) - (b[index] || 0);
+        if (difference) return difference;
+    }
+    return 0;
+}
+
 async function latestVersion(fetchImplementation = globalThis.fetch) {
     const response = await fetchImplementation("https://ffmpeg.org/releases/", {
         signal: AbortSignal.timeout(30000), redirect: "error",
@@ -22,14 +32,7 @@ async function latestVersion(fetchImplementation = globalThis.fetch) {
     if (html.length > 4 * 1024 * 1024) throw new Error("The FFmpeg release catalogue exceeds the size limit.");
     // Liquidsoap 2.4 supports FFmpeg 7 and 8, not arbitrary future major versions.
     const versions = [...html.matchAll(/href=["']ffmpeg-([78]\.\d+(?:\.\d+)?)\.tar\.xz["']/g)].map((match) => match[1]);
-    versions.sort((left, right) => {
-        const a = left.split(".").map(Number);
-        const b = right.split(".").map(Number);
-        for (let index = 0; index < 3; index += 1) {
-            if ((a[index] || 0) !== (b[index] || 0)) return (b[index] || 0) - (a[index] || 0);
-        }
-        return 0;
-    });
+    versions.sort((left, right) => compareVersions(right, left));
     if (!versions.length) throw new Error("No supported stable FFmpeg release was found on ffmpeg.org.");
     return versions[0];
 }
@@ -75,12 +78,15 @@ function validate(runtime, profile, run = spawnSync) {
     return !encoding.error && encoding.status === 0;
 }
 
-async function prepare(serverRoot, profile, { fetchImplementation, check = validate } = {}) {
+async function prepare(serverRoot, profile, { fetchImplementation, check = validate, force = false } = {}) {
     if (profile.family === "windows") return { strategy: "bundled" };
     runtimeRoot(serverRoot, profile);
     const version = await latestVersion(fetchImplementation);
     const current = resolve(serverRoot, profile);
-    return { strategy: current?.version === version && check(current, profile) ? "existing" : "source", version, current };
+    if (!force && current && compareVersions(current.version, version) > 0) {
+        throw new Error(`Installed FFmpeg ${current.version} is newer than the official catalogue (${version}); refusing an automatic downgrade.`);
+    }
+    return { strategy: !force && current?.version === version && check(current, profile) ? "existing" : "source", version, current };
 }
 
 function inspectPrerequisites(profile, { run = spawnSync, userId = process.getuid?.() } = {}) {
@@ -122,7 +128,10 @@ async function install(serverRoot, profile, plan, {
     if (plan.strategy === "bundled") return null;
     const root = runtimeRoot(serverRoot, profile);
     if (!stableVersion(plan.version)) throw new Error("Invalid managed FFmpeg version.");
-    if (plan.strategy === "existing" && plan.current && check(plan.current, profile, run)) return plan.current;
+    if (plan.strategy === "existing" && plan.current && check(plan.current, profile, run)) {
+        console.log(`FFmpeg is already up to date: ${plan.current.binary}`);
+        return plan.current;
+    }
     const report = inspectPrerequisites(profile, { run, userId });
     if (report.error) throw new Error(report.error);
     if (process.platform !== "win32" && !/^[\w./-]+$/.test(path.resolve(root))) {

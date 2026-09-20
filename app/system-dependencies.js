@@ -309,16 +309,16 @@ function sourceInstallationHelp(profile, {
 } = {}) {
     let command = "";
     if (profile.family === "linux" && ["debian", "ubuntu"].includes(distribution)) {
-        command = "sudo apt-get install opam build-essential pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz-utils diffutils libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev libcurl4-openssl-dev libffi-dev";
+        command = "sudo apt-get install opam build-essential bash pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz-utils diffutils libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev libcurl4-openssl-dev libffi-dev";
     } else if (profile.family === "linux" && ["fedora", "rhel", "rocky", "almalinux", "centos"].includes(distribution)) {
         const libraries = ["libavutil", "libavformat", "libavcodec", "libavdevice", "libavfilter", "libswresample", "libswscale", "libcurl", "libffi"];
-        command = `sudo dnf install opam gcc make pkgconf-pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz diffutils ${libraries.map((library) => quote(`pkgconfig(${library})`)).join(" ")}`;
+        command = `sudo dnf install opam gcc make bash pkgconf-pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz diffutils ${libraries.map((library) => quote(`pkgconfig(${library})`)).join(" ")}`;
     } else if (profile.family === "linux" && distribution === "arch") {
-        command = "sudo pacman -S --needed opam base-devel pkgconf rsync git bubblewrap unzip tar gzip bzip2 xz ffmpeg curl libffi";
+        command = "sudo pacman -S --needed opam base-devel bash pkgconf rsync git bubblewrap unzip tar gzip bzip2 xz ffmpeg curl libffi";
     } else if (profile.family === "macos") {
         command = "brew install opam pkg-config ffmpeg curl libffi";
     } else if (profile.family === "freebsd") {
-        command = "pkg install ocaml-opam gmake pkgconf m4 rsync git unzip ffmpeg curl libffi libsysinfo ca_root_nss";
+        command = "pkg install ocaml-opam gmake bash pkgconf m4 rsync git unzip ffmpeg curl libffi libsysinfo ca_root_nss";
     }
     if (managedFfmpeg) {
         command = command.replace(/\s+lib(?:avutil|avformat|avcodec|avdevice|avfilter|swresample|swscale)-dev\b/g, "")
@@ -326,7 +326,7 @@ function sourceInstallationHelp(profile, {
             .replace(/\s+ffmpeg\b/g, "");
     }
     const lines = command ? ["Suggested Liquidsoap build dependencies (run separately):", color ? `\u001b[33m${command}\u001b[0m` : command] :
-        ["No verified package command for this distribution. Install OPAM >= 2.1, a C compiler, make, pkg-config and the development libraries listed above."];
+        ["No verified package command for this distribution. Install OPAM >= 2.1, Bash, a C compiler, make, pkg-config and the development libraries listed above."];
     lines.push("Packages must be available in your configured repositories; RadioServer does not install OS packages or enable repositories.");
     if (managedFfmpeg) lines.push("FFmpeg and its development files are built locally in bin/ffmpeg; OS FFmpeg development packages are not required.");
     else {

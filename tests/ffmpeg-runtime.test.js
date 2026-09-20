@@ -57,12 +57,12 @@ test("managed FFmpeg environment preserves existing paths without changing the p
     assert.equal(ffmpeg.environment({ prefix }, { family: "macos" }, {}).DYLD_LIBRARY_PATH, path.join(prefix, "lib"));
 });
 
-function fixture(context, failure) {
+function fixture(context, failure, runtimeProfile = profile) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-ffmpeg-"));
     context.after(() => fs.rmSync(root, { recursive: true, force: true }));
     context.mock.method(console, "log", () => {});
     const commands = [];
-    const manifest = path.join(root, "bin", "ffmpeg", profile.id, "runtime.json");
+    const manifest = path.join(root, "bin", "ffmpeg", runtimeProfile.id, "runtime.json");
     fs.mkdirSync(path.dirname(manifest), { recursive: true });
     fs.writeFileSync(manifest, "previous manifest");
     const options = { userId: 1000,
@@ -132,7 +132,7 @@ for (const failure of ["key", "signature", "compile", "validation"]) {
     });
 }
 
-test("repeat FFmpeg installation reuses the validated current prefix without build tools or downloads", async (context) => {
+test("FFmpeg update reuses the validated current prefix without build tools or downloads", async (context) => {
     const { root, options } = fixture(context);
     const runtime = await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
     const plan = await ffmpeg.prepare(root, profile, { check: () => true,
@@ -142,6 +142,40 @@ test("repeat FFmpeg installation reuses the validated current prefix without bui
     assert.equal((await ffmpeg.install(root, profile, plan, { check: () => true,
         run: () => assert.fail("must not compile"), fetchFile: () => assert.fail("must not download"),
     })).prefix, runtime.prefix);
+});
+
+for (const family of ["linux", "macos", "freebsd"]) {
+    test(`${family} reinstalls FFmpeg at the same version only when forced by install`, async (context) => {
+        const target = { ...profile, family, id: `${family}-x64` };
+        const { root, options } = fixture(context, undefined, target);
+        const original = await ffmpeg.install(root, target, { strategy: "source", version: "8.1.2" }, options);
+        const lookup = { check: () => true,
+            fetchImplementation: async () => ({ ok: true, text: async () => '<a href="ffmpeg-8.1.2.tar.xz">stable</a>' }) };
+        assert.equal((await ffmpeg.prepare(root, target, lookup)).strategy, "existing");
+        const reinstall = await ffmpeg.prepare(root, target, { ...lookup, force: true });
+        assert.equal(reinstall.strategy, "source");
+        const replacement = await ffmpeg.install(root, target, reinstall, options);
+        assert.notEqual(replacement.prefix, original.prefix);
+        assert.equal(replacement.version, original.version);
+        assert.equal(ffmpeg.resolve(root, target).prefix, replacement.prefix);
+        assert.ok(fs.existsSync(original.binary), "preserve libraries still used by the previous Liquidsoap");
+    });
+}
+
+test("FFmpeg update builds only a new, missing or damaged runtime and refuses downgrades", async (context) => {
+    const { root, options } = fixture(context);
+    const lookup = (version, check = () => true) => ({ check,
+        fetchImplementation: async () => ({ ok: true, text: async () => `<a href="ffmpeg-${version}.tar.xz">stable</a>` }) });
+    assert.equal((await ffmpeg.prepare(root, profile, lookup("8.1.2"))).strategy, "source");
+    await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
+    assert.equal((await ffmpeg.prepare(root, profile, lookup("8.1.2"))).strategy, "existing");
+    assert.equal((await ffmpeg.prepare(root, profile, lookup("8.1.2", () => false))).strategy, "source");
+    const update = await ffmpeg.prepare(root, profile, lookup("8.1.3"));
+    assert.equal(update.strategy, "source");
+    assert.equal(update.version, "8.1.3");
+    for (const version of ["7.10.20", "8.0.20", "8.1", "8.1.1"]) {
+        await assert.rejects(ffmpeg.prepare(root, profile, lookup(version)), /refusing an automatic downgrade/);
+    }
 });
 
 test("FFmpeg validation checks exact stable version and MP3 encoding", () => {

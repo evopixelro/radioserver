@@ -22,6 +22,7 @@ for (const [family, distribution, expected] of [
         assert.ok(colored.includes(`\u001b[33m${expected}`));
         assert.match(colored, /\u001b\[0m\nPackages must/);
         if (distribution === "fedora") assert.ok(plain.includes("'pkgconfig(libavutil)'"));
+        if (family !== "macos") assert.match(plain, /install .*\bbash\b|pacman .*\bbash\b/);
     });
 }
 

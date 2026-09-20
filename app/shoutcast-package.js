@@ -80,6 +80,44 @@ async function downloadPackage(packageInfo) {
     return packageInfo.filePath;
 }
 
+function cleanupDownloads(serverRoot) {
+    try {
+        const root = fs.realpathSync(serverRoot);
+        const downloads = path.join(root, "bin", "downloads");
+        const directory = path.join(downloads, "shoutcast");
+        // Never follow redirected cache directories when deleting downloaded packages.
+        for (const component of [path.join(root, "bin"), downloads, directory]) {
+            const stat = fs.lstatSync(component);
+            if (stat.isSymbolicLink() || !stat.isDirectory()) {
+                throw new Error(`refusing to clean a redirected or non-directory cache: ${component}`);
+            }
+        }
+        const managedPackage = /^sc_serv2_(?:linux(?:_x(?:64|86))?|win(?:32|64))[-_](?:latest|\d+(?:[._-]\d+)*)\.(?:tar\.gz|exe)(?:\.part-[a-f0-9-]{36})?$/;
+        let removed = 0;
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+            if (!entry.isFile() || !managedPackage.test(entry.name)) continue;
+            const file = path.join(directory, entry.name);
+            if (path.dirname(file) !== directory) throw new Error("download cache path escaped its directory");
+            try {
+                // Non-recursive removal also protects a directory substituted after the listing.
+                fs.rmSync(file, { force: true });
+                removed += 1;
+            } catch (error) {
+                console.warn(`SHOUTcast download cleanup warning: could not remove ${file} (${error.code || error.message}). The installed runtime was not changed.`);
+            }
+        }
+        for (const emptyDirectory of [directory, downloads]) {
+            try { fs.rmdirSync(emptyDirectory); }
+            catch (error) {
+                if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error;
+            }
+        }
+        if (removed) console.log(`Removed ${removed} SHOUTcast download${removed === 1 ? "" : "s"}.`);
+    } catch (error) {
+        if (error.code !== "ENOENT") console.warn(`SHOUTcast download cleanup warning: ${error.message}. The installed runtime was not changed.`);
+    }
+}
+
 function ensureLicenseAccepted(accepted, serverRoot) {
     const licensePath = path.join(serverRoot, "bin", "shoutcast", "license.json");
     try {
@@ -111,12 +149,12 @@ function ensureLicenseAccepted(accepted, serverRoot) {
     }
 }
 
-function installLinuxPackage(packageInfo, serverRoot, runtimeProfile) {
+function installLinuxPackage(packageInfo, serverRoot, runtimeProfile, run) {
     const installDirectory = path.join(serverRoot, "bin", "shoutcast", runtimeProfile.id);
     fs.mkdirSync(path.dirname(installDirectory), { recursive: true, mode: 0o750 });
     const staging = fs.mkdtempSync(path.join(path.dirname(installDirectory), `${runtimeProfile.id}.tmp-`));
     try {
-        const result = spawnSync("tar", ["-xf", packageInfo.filePath, "-C", staging], {
+        const result = run("tar", ["-xf", packageInfo.filePath, "-C", staging], {
             stdio: "inherit",
         });
         if (result.error) throw result.error;
@@ -149,13 +187,13 @@ function installLinuxPackage(packageInfo, serverRoot, runtimeProfile) {
     }
 }
 
-function installWindowsPackage(packageInfo, serverRoot, runtimeProfile) {
+function installWindowsPackage(packageInfo, serverRoot, runtimeProfile, run) {
     const installDirectory = path.join(serverRoot, "bin", "shoutcast", runtimeProfile.id);
     console.log(`Opening the official SHOUTcast ${runtimeProfile.architecture} installer:`);
     console.log(packageInfo.filePath);
     console.log(`Suggested installation directory: ${installDirectory}`);
     console.log("If you choose another directory, set SC_SERV_BIN to the full executable path.");
-    const result = spawnSync(packageInfo.filePath, [`/D=${installDirectory}`], { stdio: "inherit" });
+    const result = run(packageInfo.filePath, [`/D=${installDirectory}`], { stdio: "inherit" });
     if (result.error) throw result.error;
     if (result.status !== 0) {
         throw new Error(`SHOUTcast installer exited with status ${result.status}.`);
@@ -176,6 +214,7 @@ async function installShoutcast({
     acceptLicense = false,
     force = false,
     serverRoot = path.resolve(__dirname, ".."),
+    run = spawnSync,
 } = {}) {
     const runtimeProfile = platform.resolveProfile();
     const existing = platform.resolveShoutcastBinary(serverRoot, runtimeProfile);
@@ -201,13 +240,15 @@ async function installShoutcast({
     const installed = readRuntimeManifest(manifestPath);
     if (existing.found && installed.sha256 === packageInfo.sha256 && !force) {
         console.log(`SHOUTcast already matches the official latest download: ${existing.path}`);
+        cleanupDownloads(serverRoot);
         return existing.path;
     }
     const binary = packageInfo.kind === "archive"
-        ? installLinuxPackage(packageInfo, serverRoot, runtimeProfile)
-        : installWindowsPackage(packageInfo, serverRoot, runtimeProfile);
+        ? installLinuxPackage(packageInfo, serverRoot, runtimeProfile, run)
+        : installWindowsPackage(packageInfo, serverRoot, runtimeProfile, run);
     fs.mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o750 });
     fs.writeFileSync(manifestPath, `${JSON.stringify({ url: packageInfo.url, sha256: packageInfo.sha256 }, null, 2)}\n`, { mode: 0o640 });
+    cleanupDownloads(serverRoot);
     return binary;
 }
 

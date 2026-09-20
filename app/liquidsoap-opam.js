@@ -15,7 +15,7 @@ function inspectPrerequisites(profile, { run = spawnSync, userId = process.getui
         encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true, env: environment,
     });
     const succeeded = (result) => !result.error && result.status === 0;
-    const items = ["opam", "pkg-config", "cc", profile.family === "freebsd" ? "gmake" : "make"].map((command) => {
+    const items = ["opam", "pkg-config", "cc", profile.family === "freebsd" ? "gmake" : "make", "bash"].map((command) => {
         const result = probe(command, ["--version"]);
         const found = succeeded(result);
         return { id: command, label: command === "cc" ? "C compiler (cc)" : command, found,
@@ -80,6 +80,25 @@ function prerequisites(profile, options = {}) {
     if (report.error) throw new Error(report.error);
 }
 
+function cleanupLegacyRoot(serverRoot, root, run, environment) {
+    try {
+        const expected = path.resolve(serverRoot, "bin", "liquidsoap", "opam");
+        if (path.resolve(root) !== expected || !fs.existsSync(expected)) return;
+        if (fs.realpathSync(expected) !== expected) throw new Error("legacy OPAM root is redirected");
+        const result = run("opam", ["switch", "list", "--short", `--root=${expected}`], {
+            cwd: serverRoot, env: { ...environment, OPAMROOT: expected }, encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"], timeout: 30000,
+        });
+        if (result.error || result.status !== 0 || typeof result.stdout !== "string" || result.stdout.trim()) return;
+        // Another platform's switches and unrecognized files must not be removed.
+        const metadata = new Set(["config", "config.lock", "lock", "repo", "log", "download-cache", "opam-init", "plugins"]);
+        if (fs.readdirSync(expected).some((name) => !metadata.has(name))) return;
+        if (cleanupRuntimeDirectory(expected)) console.log(`Removed unused legacy OPAM root: ${expected}`);
+    } catch (error) {
+        console.warn(`Legacy OPAM cleanup warning: ${error.message}. The new runtime remains installed.`);
+    }
+}
+
 function install(serverRoot, profile, version, {
     run = spawnSync,
     validate = runtime.checkRuntime,
@@ -93,27 +112,28 @@ function install(serverRoot, profile, version, {
     if (!/^\d+\.\d+\.\d+$/.test(version) || !/^(linux|macos|freebsd)-(x64|x86|arm64|arm)$/.test(profile.id)) {
         throw new Error("Invalid Liquidsoap source build target.");
     }
-    const parent = path.join(serverRoot, "bin", "liquidsoap");
+    const parent = path.join(serverRoot, "bin", "liquidsoap", profile.id);
     const opamRoot = path.join(parent, "opam");
-    const runtimeRoot = path.join(parent, profile.id);
-    const previous = readRuntimeManifest(path.join(runtimeRoot, "runtime.json"));
+    const runtimeRoot = path.join(parent, "runtime");
+    const previous = readRuntimeManifest(path.join(runtime.getManagedRoot(serverRoot, profile), "runtime.json"));
     const switchName = `${profile.id}-${version}-${randomUUID()}`;
     const binary = path.join(opamRoot, switchName, "bin", "liquidsoap");
     // A private root leaves the user's OPAM switches, shell setup and system packages alone.
     const environment = Object.fromEntries(Object.entries(buildEnvironment).filter(([key]) => !key.startsWith("OPAM")));
     Object.assign(environment, { OPAMROOT: opamRoot, OPAMYES: "1", OPAMREQUIRECHECKSUMS: "1" });
-    const command = (args, required = true) => {
-        const result = run("opam", [...args, `--root=${opamRoot}`], {
-            cwd: serverRoot, env: environment, stdio: "inherit", timeout: 3600000,
+    const command = (args, required = true, root = opamRoot) => {
+        const result = run("opam", [...args, `--root=${root}`], {
+            cwd: serverRoot, env: { ...environment, OPAMROOT: root }, stdio: "inherit", timeout: 3600000,
         });
         if (result.error || result.status !== 0) {
             const detail = result.error?.message || `exit ${result.status}`;
             if (required) throw new Error(`Liquidsoap source build failed during opam ${args[0]} (${detail}). Check the build output and required development libraries; the previous runtime was not replaced.`);
             console.warn(`Could not remove unused Liquidsoap OPAM switch ${args[2]} (${detail}).`);
         }
+        return !result.error && result.status === 0;
     };
     fs.mkdirSync(parent, { recursive: true, mode: 0o750 });
-    const staging = fs.mkdtempSync(path.join(parent, `${profile.id}.tmp-`));
+    const staging = fs.mkdtempSync(path.join(parent, "runtime.tmp-"));
     let created = false;
     let activated = false;
     try {
@@ -129,7 +149,7 @@ function install(serverRoot, profile, version, {
         const check = validate(binary, runBuilt);
         if (!check.ok) throw new Error(`The compiled Liquidsoap runtime failed validation: ${check.detail}`);
         verify(binary, version, runBuilt);
-        // OPAM embeds its prefix in compiled files. Keep the switch in place and activate a link.
+        // Keep OPAM prefixes fixed; only the small runtime directory is replaced on activation.
         if (ffmpeg) {
             const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
             const libraryPath = profile.family === "macos" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
@@ -148,8 +168,10 @@ function install(serverRoot, profile, version, {
         activate(staging, runtimeRoot);
         activated = true;
         const ownedSwitch = new RegExp(`^${profile.id}-\\d+\\.\\d+\\.\\d+-[a-f0-9-]{36}$`);
-        if (previous.method === "opam" && previous.root === opamRoot && ownedSwitch.test(previous.switch)) {
-            command(["switch", "remove", previous.switch, "--yes"], false);
+        const legacyRoot = path.join(serverRoot, "bin", "liquidsoap", "opam");
+        if (previous.method === "opam" && [opamRoot, legacyRoot].includes(previous.root) && ownedSwitch.test(previous.switch)) {
+            const removed = command(["switch", "remove", previous.switch, "--yes"], false, previous.root);
+            if (removed && previous.root === legacyRoot) cleanupLegacyRoot(serverRoot, legacyRoot, run, environment);
         }
         return path.join(runtimeRoot, "liquidsoap");
     } finally {

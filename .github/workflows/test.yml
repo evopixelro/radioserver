@@ -85,7 +85,7 @@ jobs:
           cpu: 2
           copyback: false
           prepare: |
-            pkg install -y node22 ocaml-opam curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl
+            pkg install -y node22 ocaml-opam bash curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl
             pw useradd radio-test -m -s /bin/sh
           run: |
             set -eu
@@ -95,7 +95,7 @@ jobs:
               set -eu
               cd /home/radio-test/radioserver
               node .github/scripts/install-liquidsoap.js /home/radio-test/radio-runtime
-              export LIQUIDSOAP_TEST_BIN=/home/radio-test/radio-runtime/bin/liquidsoap/freebsd-x64/liquidsoap
+              export LIQUIDSOAP_TEST_BIN=/home/radio-test/radio-runtime/bin/liquidsoap/freebsd-x64/runtime/liquidsoap
               "$LIQUIDSOAP_TEST_BIN" --version
               node --test --test-reporter=tap
               for iteration in 1 2; do
@@ -130,7 +130,7 @@ jobs:
           cd "$HOME/radioserver"
           test "$(. /etc/os-release; echo "$ID:$VERSION_ID")" = fedora:44
           node .github/scripts/install-liquidsoap.js "$HOME/radio-runtime"
-          export LIQUIDSOAP_TEST_BIN="$HOME/radio-runtime/bin/liquidsoap/linux-x64/liquidsoap"
+          export LIQUIDSOAP_TEST_BIN="$HOME/radio-runtime/bin/liquidsoap/linux-x64/runtime/liquidsoap"
           "$LIQUIDSOAP_TEST_BIN" --version
           node --test --test-reporter=tap
           for iteration in 1 2; do

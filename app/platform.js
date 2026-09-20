@@ -183,6 +183,9 @@ function resolveLiquidsoapBinary(serverRoot, profile, environment = process.env)
     if (profile.family === "linux") {
         candidates.unshift(path.join(runtimeRoot, profile.id, "usr", "bin", executableName));
     }
+    if (["linux", "macos", "freebsd"].includes(profile.family)) {
+        candidates.unshift(path.join(runtimeRoot, profile.id, "runtime", executableName));
+    }
     if (profile.family === "windows" && (profile.architecture === "x64" || process.arch === "x64")) {
         candidates.unshift(
             path.join(

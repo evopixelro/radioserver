@@ -21,7 +21,7 @@ test("install refuses to replace runtimes while a managed process is running", a
     assert.equal(install.mock.callCount(), 0);
 });
 
-test("runtime update refreshes SHOUTcast and Liquidsoap AutoDJ", async (context) => {
+test("runtime install forces reinstallation of SHOUTcast and Liquidsoap AutoDJ", async (context) => {
     const runtimeProfile = { family: "linux", architecture: "x64", id: "linux-x64" };
     const liquidsoap = { found: true, path: "/usr/bin/liquidsoap", source: "PATH" };
     const serverRoot = path.resolve("/srv/radioserver");
@@ -62,11 +62,13 @@ test("runtime update refreshes SHOUTcast and Liquidsoap AutoDJ", async (context)
         serverRoot,
         plan,
     });
+    assert.equal(ffmpeg.prepare.mock.calls[0].arguments[2].force, true);
+    assert.equal(dependencies.prepareInstall.mock.calls[0].arguments[0].force, true);
 });
 
 for (const source of ["SC_SERV_BIN", "LIQUIDSOAP_BIN"]) {
     for (const force of [false, true]) {
-        test(`${force ? "update" : "install"} rejects a missing ${source} override before downloads`, async (context) => {
+        test(`${force ? "install" : "update"} rejects a missing ${source} override before downloads`, async (context) => {
             context.mock.method(console, "log", () => {});
             context.mock.method(require("../app/process-manager"), "getStatus", () => ({ running: false }));
             context.mock.method(require("../app/autodj-manager"), "status", () => ({ running: false }));
@@ -104,6 +106,21 @@ function platformFixture(context, family, architecture, shoutcastFound) {
     };
 }
 
+for (const family of ["linux", "windows", "macos", "freebsd"]) {
+    for (const force of [false, true]) {
+        test(`${family} ${force ? "install" : "update"} applies the same reinstall policy to every component`, async (context) => {
+            const fixture = platformFixture(context, family, "x64", true);
+            // The public install entry point reinstalls by default; update explicitly opts out.
+            await installRuntime({ acceptLicense: true, ...(force ? {} : { force: false }) });
+            assert.equal(ffmpeg.prepare.mock.calls[0].arguments[2].force, force);
+            assert.equal(fixture.plan.mock.calls[0].arguments[0].force, force);
+            assert.equal(fixture.plan.mock.calls[0].arguments[0].ffmpegPlan.strategy, "bundled");
+            assert.equal(fixture.radio.mock.calls[0].arguments[0].force, force);
+            assert.equal(fixture.autodj.mock.calls[0].arguments[0].force, force);
+        });
+    }
+}
+
 test("latest Liquidsoap selection fails before SHOUTcast is replaced", async (context) => {
     const fixture = platformFixture(context, "linux", "x64", true);
     const lines = [];
@@ -127,7 +144,7 @@ for (const family of ["linux", "windows", "macos", "freebsd"]) {
 }
 
 for (const force of [false, true]) {
-    test(`Windows ${force ? "update" : "install"} repairs a damaged managed SHOUTcast package`, async (context) => {
+    test(`Windows ${force ? "install" : "update"} repairs a damaged managed SHOUTcast package`, async (context) => {
         const fixture = platformFixture(context, "windows", "x64", true);
         context.mock.method(platform, "resolveShoutcastBinary", () => ({ found: true, path: "/managed/sc_serv.exe", source: "platform" }));
         context.mock.method(require("../app/system-dependencies"), "inspect", () => ({
@@ -142,7 +159,7 @@ for (const force of [false, true]) {
 
 for (const family of ["linux", "windows", "macos", "freebsd"]) {
     for (const force of [false, true]) {
-        test(`${family} ${force ? "update" : "install"} stops before downloads when native inspection fails`, async (context) => {
+        test(`${family} ${force ? "install" : "update"} stops before downloads when native inspection fails`, async (context) => {
             const fixture = platformFixture(context, family, "x64", true);
             context.mock.method(require("../app/system-dependencies"), "inspect", () => ({
                 checked: false, libraries: [], missing: [], abiError: false, inspectionError: "OS inspection tool failed",
@@ -166,7 +183,7 @@ for (const [family, architecture] of [["macos", "x64"], ["macos", "arm64"], ["fr
 }
 
 for (const force of [false, true]) {
-    test(`${force ? "update" : "install"} prints every source prerequisite above runtimes before stopping`, async (context) => {
+    test(`${force ? "install" : "update"} prints every source prerequisite above runtimes before stopping`, async (context) => {
         const fixture = platformFixture(context, "linux", "x64", true);
         const lines = [];
         context.mock.method(console, "log", (line) => lines.push(line));
@@ -238,7 +255,7 @@ test("official Linux binaries check extraction tools without probing source prer
 });
 
 for (const force of [false, true]) {
-    test(`SHOUTcast ${force ? "update" : "install"} stops before downloads when archive tools are missing`, async (context) => {
+    test(`SHOUTcast ${force ? "install" : "update"} stops before downloads when archive tools are missing`, async (context) => {
         const fixture = platformFixture(context, "linux", "x64", true);
         const lines = [];
         context.mock.method(console, "log", (line) => lines.push(line));
@@ -364,7 +381,7 @@ test("both engines list each native library before installation tools and yellow
 });
 
 for (const force of [false, true]) {
-    test(`${force ? "update" : "install"} builds local FFmpeg before Liquidsoap and does not require the system executable`, async (context) => {
+    test(`${force ? "install" : "update"} builds local FFmpeg before Liquidsoap and does not require the system executable`, async (context) => {
         const fixture = platformFixture(context, "linux", "x64", true);
         const order = [];
         const local = { version: "8.1.2", prefix: "/radio/bin/ffmpeg/linux-x64/builds/8.1.2-test", binary: "/radio/local/ffmpeg" };

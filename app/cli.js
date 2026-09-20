@@ -78,8 +78,8 @@ RadioServer:
   clear_logs                  Empty active RadioServer logs while stopped
   setup                       Run sc_serv setup
   doctor                      Check Node.js, binaries and runtime requirements
-  install --accept-license    Download and install verified platform binaries
-  update --accept-license     Refresh all repository-managed binaries
+  install --accept-license    Install or reinstall managed radio runtimes
+  update --accept-license     Update only changed or missing managed runtimes
   update_code [options]       Update controller code from GitHub
 
 AutoDJ (Liquidsoap):
@@ -165,7 +165,7 @@ async function dispatch(argumentsList) {
         case "update":
             await runtimeInstaller.installRuntime({
                 acceptLicense: commandArguments.includes("--accept-license"),
-                force: true,
+                force: false,
             });
             return;
         case "update_code":

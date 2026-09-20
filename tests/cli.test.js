@@ -103,7 +103,7 @@ test("install and update forward explicit license acceptance to the runtime inst
     await cli.main(["update", "--accept-license"]);
     assert.deepEqual(installer.mock.calls.map((call) => call.arguments[0]), [
         { acceptLicense: true },
-        { acceptLicense: true, force: true },
+        { acceptLicense: true, force: false },
     ]);
 });
 
@@ -148,7 +148,7 @@ test("direct commands without a flag rely on saved consent instead of implying a
     await cli.main(["update"]);
     assert.deepEqual(installer.mock.calls.map((call) => call.arguments[0]), [
         { acceptLicense: false },
-        { acceptLicense: false, force: true },
+        { acceptLicense: false, force: false },
     ]);
 });
 

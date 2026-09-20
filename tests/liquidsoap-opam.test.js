@@ -21,10 +21,10 @@ for (const family of ["linux", "macos", "freebsd"]) {
                 commands.push({ command, args, options });
                 if (command === "opam" && args[0] === "install") {
                     const switchName = args.find((value) => value.startsWith("--switch=")).slice(9);
-                    const binary = path.join(parent, "opam", switchName, "bin", "liquidsoap");
+                    const binary = path.join(parent, profile.id, "opam", switchName, "bin", "liquidsoap");
                     fs.mkdirSync(path.dirname(binary), { recursive: true });
                     fs.writeFileSync(binary, "compiled latest runtime");
-                    assert.equal(options.env.OPAMROOT, path.join(parent, "opam"));
+                    assert.equal(options.env.OPAMROOT, path.join(parent, profile.id, "opam"));
                     assert.equal(options.env.OPAMREQUIRECHECKSUMS, "1");
                 }
                 return { status: 0, stdout: "2.1.0" };
@@ -33,7 +33,7 @@ for (const family of ["linux", "macos", "freebsd"]) {
             verify: (_binary, version) => assert.equal(version, "2.4.5"),
             activate: activateRuntime,
         });
-        assert.equal(result, path.join(parent, profile.id, "liquidsoap"));
+        assert.equal(result, path.join(parent, profile.id, "runtime", "liquidsoap"));
         assert.equal(links.mock.callCount(), 1);
         const install = commands.find(({ args }) => args[0] === "install");
         assert.ok(install.args.includes("liquidsoap.2.4.5"));
@@ -42,18 +42,18 @@ for (const family of ["linux", "macos", "freebsd"]) {
         assert.ok(install.args.includes("--require-checksums"));
         assert.ok(commands.find(({ args }) => args[0] === "init").args.includes("https://opam.ocaml.org"));
         assert.equal(commands.some(({ args }) => args.includes("--disable-sandboxing")), false);
-        const manifest = JSON.parse(fs.readFileSync(path.join(parent, profile.id, "runtime.json"), "utf8"));
+        const manifest = JSON.parse(fs.readFileSync(path.join(parent, profile.id, "runtime", "runtime.json"), "utf8"));
         assert.equal(manifest.version, "2.4.5");
         assert.equal(manifest.method, "opam");
     });
 }
 
-for (const failure of ["compile", "validation", "version", "activation"]) {
-    test(`source ${failure} failure preserves the previous runtime and removes only the new switch`, (context) => {
+for (const [failure, layout] of ["compile", "validation", "version", "activation"].flatMap((failure) => ["legacy", "platform"].map((layout) => [failure, layout]))) {
+    test(`source ${failure} failure with ${layout} layout preserves the previous runtime and removes only the new switch`, (context) => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-opam-failure-"));
         context.after(() => fs.rmSync(root, { recursive: true, force: true }));
         context.mock.method(fs, "symlinkSync", (_source, destination) => fs.writeFileSync(destination, "new runtime"));
-        const runtime = path.join(root, "bin", "liquidsoap", "linux-x64");
+        const runtime = path.join(root, "bin", "liquidsoap", "linux-x64", ...(layout === "platform" ? ["runtime"] : []));
         fs.mkdirSync(runtime, { recursive: true });
         fs.writeFileSync(path.join(runtime, "liquidsoap"), "old runtime");
         const commands = [];
@@ -71,7 +71,72 @@ for (const failure of ["compile", "validation", "version", "activation"]) {
         const created = commands.find((args) => args[0] === "switch" && args[1] === "create")[2];
         const removed = commands.filter((args) => args[0] === "switch" && args[1] === "remove");
         assert.deepEqual(removed.map((args) => args[2]), [created]);
-    });
+});
+}
+
+for (const legacy of [false, true]) {
+    for (const keep of ["none", "other-switch", "unknown-file", "list-failure"]) {
+        test(`${legacy ? "legacy migration" : "platform reinstall"} preserves fixed OPAM prefixes and handles ${keep}`, (context) => {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-opam-migration-"));
+            context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+            context.mock.method(console, "log", () => {});
+            const profile = { family: "linux", architecture: "x64", id: "linux-x64" };
+            const parent = path.join(root, "bin", "liquidsoap");
+            const platformRoot = path.join(parent, profile.id);
+            const newOpamRoot = path.join(platformRoot, "opam");
+            const previousRoot = legacy ? path.join(parent, "opam") : newOpamRoot;
+            const previousRuntime = legacy ? platformRoot : path.join(platformRoot, "runtime");
+            const oldSwitch = `${profile.id}-2.4.4-00000000-0000-0000-0000-000000000000`;
+            const oldNative = path.join(previousRoot, oldSwitch, "bin", "liquidsoap");
+            fs.mkdirSync(path.dirname(oldNative), { recursive: true });
+            fs.mkdirSync(previousRuntime, { recursive: true });
+            fs.writeFileSync(oldNative, "old native");
+            fs.writeFileSync(path.join(previousRoot, "config"), "private root configuration");
+            fs.writeFileSync(path.join(previousRuntime, "liquidsoap"), "old launcher", { mode: 0o755 });
+            fs.writeFileSync(path.join(previousRuntime, "runtime.json"), JSON.stringify({ method: "opam", root: previousRoot, switch: oldSwitch, version: "2.4.4" }));
+            if (keep === "unknown-file") fs.writeFileSync(path.join(previousRoot, "keep.txt"), "user file");
+            const ffmpeg = { prefix: path.join(root, "bin", "ffmpeg", profile.id, "builds", "8.1.2-test"), version: "8.1.2" };
+            let newNative;
+            let activated = false;
+            const binary = opam.install(root, profile, "2.4.5", { ffmpeg, userId: 1000,
+                run(command, args, options) {
+                    if (command === "opam" && args[0] === "install") {
+                        assert.equal(options.env.OPAMROOT, newOpamRoot);
+                        const name = args.find((arg) => arg.startsWith("--switch=")).slice(9);
+                        newNative = path.join(newOpamRoot, name, "bin", "liquidsoap");
+                        fs.mkdirSync(path.dirname(newNative), { recursive: true });
+                        fs.writeFileSync(newNative, "new native");
+                    }
+                    if (command === "opam" && args[0] === "switch" && args[1] === "remove") {
+                        assert.equal(activated, true, "never remove the previous switch before activation");
+                        assert.equal(args[2], oldSwitch);
+                        assert.equal(options.env.OPAMROOT, previousRoot);
+                        fs.rmSync(path.join(previousRoot, oldSwitch), { recursive: true, force: true });
+                    }
+                    if (command === "opam" && args[0] === "switch" && args[1] === "list") {
+                        assert.equal(options.env.OPAMROOT, previousRoot);
+                        return { status: keep === "list-failure" ? 1 : 0, stdout: keep === "other-switch" ? "freebsd-x64-other\n" : "" };
+                    }
+                    return { status: 0, stdout: "2.1.0" };
+                },
+                validate: (native) => ({ ok: fs.readFileSync(native, "utf8") === "new native" }),
+                verify: () => "2.4.5",
+                activate(staging, destination) {
+                    assert.equal(fs.readFileSync(oldNative, "utf8"), "old native");
+                    assert.equal(destination, path.join(platformRoot, "runtime"));
+                    activateRuntime(staging, destination);
+                    assert.equal(fs.readFileSync(newNative, "utf8"), "new native", "activation must not move the OPAM root");
+                    activated = true;
+                },
+            });
+            const runtime = require("../app/liquidsoap-runtime");
+            assert.equal(runtime.getNativeRuntime(binary, profile).binary, newNative);
+            assert.equal(require("../app/platform").resolveLiquidsoapBinary(root, profile, { PATH: "" }).path, binary);
+            assert.equal(fs.existsSync(oldNative), false);
+            assert.equal(fs.existsSync(previousRoot), !legacy || keep !== "none");
+            if (keep === "unknown-file") assert.equal(fs.readFileSync(path.join(previousRoot, "keep.txt"), "utf8"), "user file");
+        });
+    }
 }
 
 test("source builds refuse root and unsupported Windows targets", () => {
@@ -125,7 +190,7 @@ for (const family of ["linux", "macos", "freebsd"]) {
         assert.ok(launcher.includes(`\${${libraryPath}:+:\"$${libraryPath}\"}`));
         assert.match(launcher, /exec '[^\n]+' "\$@"\n$/);
         const native = require("../app/liquidsoap-runtime").getNativeRuntime(binary, profile);
-        assert.ok(native.binary.startsWith(path.join(root, "bin", "liquidsoap", "opam")));
+        assert.ok(native.binary.startsWith(path.join(root, "bin", "liquidsoap", profile.id, "opam")));
         assert.ok(native.environment[libraryPath].startsWith(path.join(ffmpeg.prefix, "lib")));
         assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(binary), "runtime.json"))).ffmpegPrefix, ffmpeg.prefix);
     });
@@ -153,7 +218,7 @@ test("source report lists each development library and continues after missing d
         if (command === "pkg-config" && args[0] === "--exists" && ["libavdevice", "libffi"].includes(args[1])) return { status: 1 };
         return { status: 0, stdout: command === "opam" ? "2.1.0" : "60.8.100" };
     } });
-    assert.equal(report.items.length, 20);
+    assert.equal(report.items.length, 21);
     assert.deepEqual(report.items.filter((item) => !item.found).map((item) => item.id), ["libavdevice", "libffi"]);
     assert.match(report.error, /Missing: libavdevice, libffi/);
     assert.match(report.items.find((item) => item.id === "libavutil").detail, /60\.8\.100.*check passed/);
@@ -207,3 +272,13 @@ test("source report checks OPAM helper tools and accepts wget without requiring 
     assert.match(report.items.find((item) => item.id === "curl or wget").detail, /wget available/);
     assert.match(report.error, /requires: patch, bwrap/);
 });
+
+for (const family of ["linux", "macos", "freebsd"]) {
+    test(`${family} reports missing Bash before starting an OPAM build`, () => {
+        const report = opam.inspectPrerequisites({ family }, { userId: 1000, managedFfmpeg: true, run(command) {
+            return { status: command === "bash" ? 1 : 0, stdout: "2.1.0" };
+        } });
+        assert.deepEqual(report.items.filter((item) => !item.found).map((item) => item.id), ["bash"]);
+        assert.match(report.error, /requires: bash/);
+    });
+}

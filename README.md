@@ -44,9 +44,10 @@ npm install
 npm run install
 ```
 
-`npm install` also runs the installation lifecycle script. `npm run install`
-downloads or builds managed runtimes into `bin/`, including Liquidsoap's standard library and local FFmpeg, or validates
-externally supplied runtimes. Active configurations stay in the repository root.
+`npm install` runs the Node.js lifecycle script without installing radio runtimes.
+`npm run install` installs or reinstalls managed runtimes into `bin/`, including
+Liquidsoap's standard library and local FFmpeg, or validates externally supplied
+runtimes. Active configurations stay in the repository root.
 
 The installer marks available requirements in green, missing requirements in
 red and system installation commands in yellow. Run any suggested commands
@@ -68,12 +69,16 @@ do not require the source-build tools; the Windows package also includes FFmpeg.
 The checks do not install system packages.
 For a first installation, native libraries are checked again after extraction,
 before activating the new executable.
+After a successful SHOUTcast install or update, its downloaded packages are removed,
+including recognized older archives and installers. Empty download directories are
+removed too; other files and Liquidsoap downloads are left untouched. A failed
+installation keeps the SHOUTcast package for troubleshooting.
 
 On Linux, macOS and FreeBSD, install and update build the newest stable FFmpeg
 release supported by Liquidsoap in `bin/ffmpeg/<os>-<arch>/`. Sources come from
 ffmpeg.org and must pass signature verification against the upstream release key.
-The system FFmpeg is left unchanged. Repeating installation reuses a validated
-local build when its version is current. Windows uses the FFmpeg libraries already
+The system FFmpeg is left unchanged. `update` reuses a validated local build when
+its version is current; `install` rebuilds it. Windows uses the FFmpeg libraries already
 included in the local official Liquidsoap package; no separate Unix build is needed.
 
 ### Initial configuration
@@ -120,7 +125,7 @@ On macOS and FreeBSD, supply a compatible licensed SHOUTcast executable.
 When no matching binary exists for the latest Liquidsoap release, the installer
 uses [OPAM](https://www.liquidsoap.info/doc-2.4.5/install#install-using-opam)
 to compile that exact version from the official release sources. Install OPAM 2.1 or newer,
-a C compiler, make (`gmake` on FreeBSD), `pkg-config`, and development files for
+a C compiler, Bash, make (`gmake` on FreeBSD), `pkg-config`, and development files for
 curl and libffi first. Local FFmpeg compilation also needs GnuPG, tar, xz, NASM on
 Intel CPUs, and development files for LAME, OpenSSL and zlib. The installer lists
 missing requirements and the appropriate OS package commands before building.
@@ -145,12 +150,21 @@ Do not remove the curl, libffi, LAME, OpenSSL or zlib development packages neede
 for future builds. No `autoremove` is needed. Runtime FFmpeg libraries and the
 system `ffmpeg` package can remain installed.
 
-Builds run as the service account in a private `bin/liquidsoap/opam` root, not
-the account's existing OPAM switches. They require additional time and disk
+Source builds run as the service account with a private OPAM root inside the
+platform directory, for example `bin/liquidsoap/linux-x64/opam/`. The launcher
+and manifest live in `bin/liquidsoap/linux-x64/runtime/`; macOS and FreeBSD use
+their own platform directories. Official binary packages do not use OPAM.
+The account's existing OPAM switches are untouched. Builds require additional time and disk
 space. Checksums remain enabled; system packages are never installed by the
 controller. A failed build leaves the previous active runtime in place.
 Keep the repository at the same absolute path after a source build; rebuild
 Liquidsoap if it is moved. Do not run OPAM as root.
+Older layouts remain readable, so an up-to-date `update` does not trigger a
+rebuild just to rearrange folders. `install`, or a necessary source update,
+builds in the platform-specific location before removing the previous switch.
+The old shared `bin/liquidsoap/opam/` is removed only after no switches remain
+and it contains only recognized OPAM metadata; other platforms and unknown files
+are preserved. Do not move existing OPAM folders manually.
 FFmpeg builds use permanent versioned prefixes because Liquidsoap may still link
 to an older one. Do not delete those prefixes while they are in use. Unix source
 builds require a project path without spaces or shell-special characters.
@@ -420,7 +434,7 @@ a commit is suitable for deployment.
 
 ### Runtime binaries
 
-`npm run update` updates managed SHOUTcast and Liquidsoap binaries:
+`npm run update` checks managed SHOUTcast, Liquidsoap and FFmpeg for updates:
 
 ```bash
 npm run autodj:stop
@@ -431,18 +445,24 @@ npm start
 npm run autodj:start
 ```
 
-Both `install` and `update` check the latest stable official Liquidsoap release
-before changing either runtime. Rolling and prerelease builds are excluded.
+Both `install` and `update` check the latest stable official Liquidsoap and
+compatible FFmpeg releases before changing runtimes. Rolling and prerelease builds are excluded.
 A matching official binary is preferred; Unix hosts without one build the same
 version through OPAM. There is no fallback to an older release or a package
 for another distribution. Lookup or prerequisite failures stop the operation.
-`install` keeps a verified matching runtime; `update` reinstalls managed runtimes.
-The executable's reported version is checked before activation. Configs and
-playlists are preserved.
+`install` installs missing components and reinstalls managed components already
+present, even at the same version. `update` keeps validated current components
+and only installs missing, changed or damaged ones. FFmpeg and Liquidsoap updates
+refuse an automatic downgrade if the release catalogue is older than the installed
+version. A new local FFmpeg build also requires rebuilding a managed source-based
+Liquidsoap to link it to the new libraries. Configs and playlists are preserved.
+Windows updates FFmpeg through its Liquidsoap bundle.
 
 Liquidsoap assets are checked against published SHA-256 digests or recorded
 checksums. SHOUTcast uses the official HTTPS distribution and a locally recorded
-digest, not a separate vendor signature. Keep TLS verification enabled.
+digest, not a separate vendor signature. Its `latest` package is downloaded for
+comparison during update; an identical digest skips installation, and the download
+is then cleaned up. Keep TLS verification enabled.
 
 Packages are staged and validated where supported. Windows SHOUTcast uses the
 vendor's interactive installer. The two engine updates are separate operations,

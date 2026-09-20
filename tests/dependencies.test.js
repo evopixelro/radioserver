@@ -364,7 +364,7 @@ for (const family of ["macos", "freebsd"]) {
     });
     for (const source of ["platform", "PATH", "LIQUIDSOAP_BIN"]) {
         for (const force of [false, true]) {
-            test(`${family} ${force ? "update" : "install"} preserves the supplied Liquidsoap from ${source}`, async (context) => {
+            test(`${family} ${force ? "install" : "update"} preserves the supplied Liquidsoap from ${source}`, async (context) => {
                 const profile = { family, architecture: "x64", id: `${family}-x64` };
                 const existing = { found: true, source, path: "/provided/liquidsoap" };
                 context.mock.method(console, "log", () => {});
