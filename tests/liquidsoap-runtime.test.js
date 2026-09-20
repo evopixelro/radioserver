@@ -14,11 +14,42 @@ const { createMetadataLogParser } = require("../app/metadata-repair");
 const binary = process.env.LIQUIDSOAP_TEST_BIN;
 
 test("runtime validation does not create a cache in the working directory", () => {
-    const check = checkRuntime("liquidsoap", (_binary, args) => {
+    let workingDirectory;
+    const check = checkRuntime("liquidsoap", (_binary, args, options) => {
         assert.deepEqual(args, ["--no-cache", "--check", "()"]);
+        workingDirectory = options.cwd;
+        assert.equal(path.dirname(workingDirectory), os.tmpdir());
+        fs.mkdirSync(path.join(workingDirectory, "cache"));
+        fs.writeFileSync(path.join(workingDirectory, "cache", "stdlib.liq-cache"), "temporary cache");
         return { status: 0 };
     });
     assert.equal(check.ok, true);
+    assert.equal(fs.existsSync(workingDirectory), false);
+});
+
+test("failed validation preserves relative executable paths and cleans temporary files", () => {
+    let workingDirectory;
+    const check = checkRuntime("./bin/liquidsoap", (executable, _args, options) => {
+        assert.equal(executable, path.resolve("./bin/liquidsoap"));
+        workingDirectory = options.cwd;
+        fs.mkdirSync(path.join(workingDirectory, "cache"));
+        throw new Error("validation failed");
+    });
+    assert.deepEqual(check, { ok: false, detail: "validation failed" });
+    assert.equal(fs.existsSync(workingDirectory), false);
+});
+
+test("native runtime validation removes its generated cache", {
+    skip: !binary && "Set LIQUIDSOAP_TEST_BIN to run the real Liquidsoap interpreter",
+    timeout: 60000,
+}, () => {
+    let workingDirectory;
+    const check = checkRuntime(binary, (executable, args, options) => {
+        workingDirectory = options.cwd;
+        return spawnSync(executable, args, options);
+    });
+    assert.equal(check.ok, true, check.detail);
+    assert.equal(fs.existsSync(workingDirectory), false);
 });
 
 test("Liquidsoap accepts the generated output and evaluates nullable Unicode titles", {

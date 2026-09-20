@@ -1,8 +1,10 @@
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const ffmpegRuntime = require("./ffmpeg-runtime");
+const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
 
 function getManagedRoot(serverRoot, profile) {
     const id = profile.family === "windows" && profile.architecture === "x86" && process.arch === "x64" ? "windows-x64" : profile.id;
@@ -55,9 +57,13 @@ function getArguments(binary, args = []) {
 }
 
 function checkRuntime(binary, run = spawnSync) {
+    let temporaryRoot;
     try {
-        const result = run(binary, getArguments(binary, ["--no-cache", "--check", "()"]), {
-            encoding: "utf8", timeout: 45000, windowsHide: true,
+        const executable = path.isAbsolute(binary) || !/[\\/]/.test(binary) ? binary : path.resolve(binary);
+        // Liquidsoap can create a cache directory even when caching is disabled.
+        temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "radio-liquidsoap-check-"));
+        const result = run(executable, getArguments(executable, ["--no-cache", "--check", "()"]), {
+            encoding: "utf8", timeout: 45000, windowsHide: true, cwd: temporaryRoot,
             stdio: ["ignore", "pipe", "pipe"],
         });
         return {
@@ -67,6 +73,8 @@ function checkRuntime(binary, run = spawnSync) {
         };
     } catch (error) {
         return { ok: false, detail: error.message };
+    } finally {
+        if (temporaryRoot) cleanupRuntimeDirectory(temporaryRoot);
     }
 }
 
