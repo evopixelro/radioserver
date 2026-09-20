@@ -1,43 +1,43 @@
 # RadioServer
 
-Node.js controller for SHOUTcast DNAS and Liquidsoap AutoDJ. Handles runtime
-installation, playlists, process supervision, UTF-8 metadata and log retention.
+RadioServer runs SHOUTcast DNAS with Liquidsoap for AutoDJ. It provides commands
+for installation, playback, playlist scheduling, metadata and log management.
 
 ## Requirements
 
 - Node.js `>=22.0.0`; use a maintained LTS release with current security patches
-- SHOUTcast DNAS built for the host OS and architecture
+- A compatible SHOUTcast DNAS executable; see the platform notes below
 - Liquidsoap >=2.2.5 (>=2.4.5 for playlist schedules) with FFmpeg support and the configured audio codecs
 - FFmpeg on Linux, macOS and FreeBSD; included in the managed Windows Liquidsoap package
 - A dedicated service account with write access to the repository and its data directories
 
-Run commands from the repository root as the service account. Only system
-dependency installation may require elevated privileges. Startup and maintenance
-commands enforce the Node.js minimum; help, diagnostics, status, console and
-stop commands remain available for recovery on older versions.
+Run commands from the repository root as the service account. Use elevated
+privileges only to install system dependencies. Startup and maintenance require
+Node.js 22 or newer; help, diagnostics, status, console and stop commands remain
+available on older versions for recovery.
 
 ### Platforms
 
 | Platform | Runtime installation |
 | --- | --- |
-| Linux | SHOUTcast x64/x86 downloads; latest official Liquidsoap package or a private OPAM source build |
-| Windows | SHOUTcast x64/x86 vendor installer; Liquidsoap x64 portable package |
-| macOS / FreeBSD | Externally supplied compatible SHOUTcast; latest Liquidsoap built from official sources with OPAM |
+| Linux | Official SHOUTcast x64/x86 packages; Liquidsoap from an official package or a private OPAM build |
+| Windows | Official SHOUTcast x64/x86 installer; Liquidsoap x64 portable package |
+| FreeBSD x64 | Linux x64 SHOUTcast through Linuxulator; native Liquidsoap built with OPAM |
+| macOS | Native Node.js, Liquidsoap and FFmpeg; no current native SHOUTcast package |
+| Other FreeBSD architectures | Requires a compatible SHOUTcast executable supplied separately |
 
-Debian/Ubuntu packages are selected for the exact distribution release and
-architecture, not reused across unrelated systems. Missing packages use the
-source-build path on Unix. Native 32-bit Windows requires a separately supplied
-compatible Liquidsoap build; the installer does not substitute an older release.
-
-Both engines must work on the target host. macOS, Apple Silicon and FreeBSD
-require native validation of supplied binaries. The controller does not install
-emulation or download older Mac/BSD DNAS builds.
+The installer selects Debian/Ubuntu packages for the exact distribution release
+and architecture. Unix systems without a matching package build Liquidsoap from
+source. Native 32-bit Windows requires a compatible Liquidsoap build supplied
+separately.
 
 [Current SHOUTcast server downloads](https://shoutcast.com/pricing/basic) target
-Linux and Windows. For a complete current stack on a Mac or FreeBSD host without
-a compatible native DNAS binary, run RadioServer and both engines together in a
-Linux virtual machine. A Linux executable cannot be used as a native Mac/BSD
-replacement through `SC_SERV_BIN`.
+Linux and Windows. FreeBSD x64 can use the Linux executable after Linuxulator is
+configured. It is not a native FreeBSD build, and the installer does not enable
+Linuxulator itself. On macOS, run the complete radio in a Linux virtual machine
+with a compatible CPU architecture. The same applies to FreeBSD architectures
+without a compatible DNAS binary. Older Mac/BSD DNAS builds are not downloaded
+automatically.
 
 ## Installation
 
@@ -50,45 +50,29 @@ npm install
 npm run install
 ```
 
-`npm install` runs the Node.js lifecycle script without installing radio runtimes.
-`npm run install` installs or reinstalls managed runtimes into `bin/`, including
-Liquidsoap's standard library and local FFmpeg, or validates externally supplied
-runtimes. Active configurations stay in the repository root.
+`npm install` does not install the radio runtimes. Use `npm run install` to install
+or reinstall them in `bin/`. This includes Liquidsoap's standard library and local
+FFmpeg. Executables selected through `SC_SERV_BIN` or `LIQUIDSOAP_BIN` are checked,
+not replaced. Active configurations stay in the repository root.
 
-The installer marks available requirements in green, missing requirements in
-red and system installation commands in yellow. Run any suggested commands
-separately, then repeat `npm run install` as the service account. The controller
-never installs OS packages itself. Colors are disabled for redirected output
-and `NO_COLOR`.
+During install and update, system dependencies appear above the runtime list.
+SHOUTcast and Liquidsoap have separate library checks. `FOUND` is green,
+`MISSING` is red, and suggested OS installation commands are yellow. Run those
+commands separately, then retry as the service account. RadioServer does not
+install OS packages. Colors are disabled for redirected output and `NO_COLOR`.
 
-On Linux, Windows, macOS and FreeBSD, a system dependency section appears above
-the runtime list during install and update. SHOUTcast and Liquidsoap have separate
-native library lists, showing both available and missing libraries. If an executable
-is not available yet, its native library check is marked `NOT CHECKED` until the
-executable is downloaded or supplied. Archive tools are listed separately from
-runtime libraries. Source builds list each build tool and development library
-separately, including the detected version and the FFmpeg minimum version check.
-Missing libraries include package installation commands where a mapping is known,
-shown in yellow below the system dependency list. Libraries installed outside
-the system paths must be visible to `pkg-config`. Official binary installations
-do not require the source-build tools; the Windows package also includes FFmpeg.
-The checks do not install system packages.
-For a first installation, native libraries are checked again after extraction,
-before activating the new executable.
-After a successful installation or update, each managed runtime removes its
-recognized downloaded packages, including older archives. Empty download directories
-are removed too; unrelated files are kept. A failed installation keeps its package
-for troubleshooting. Liquidsoap's Debian package dependencies are recorded in the
-runtime manifest so diagnostics do not need the downloaded archive.
-Older binary installations retain their active Debian archive until a reinstall
-records this metadata; obsolete packages are still removed.
+Library checks are marked `NOT CHECKED` until the executable has been downloaded
+or supplied. Its libraries are checked before activation. Archive tools are listed
+separately; source builds also list compiler tools, development libraries and
+version requirements. Package installation commands are shown where a mapping
+is known. Libraries outside the system paths must be visible to `pkg-config`.
+Official binary packages do not require the source-build tools.
 
-On Linux, macOS and FreeBSD, install and update build the newest stable FFmpeg
-release supported by Liquidsoap in `bin/ffmpeg/<os>-<arch>/`. Sources come from
-ffmpeg.org and must pass signature verification against the upstream release key.
-The system FFmpeg is left unchanged. `update` reuses a validated local build when
-its version is current; `install` rebuilds it. Windows uses the FFmpeg libraries already
-included in the local official Liquidsoap package; no separate Unix build is needed.
+Unix installations build the latest supported stable FFmpeg release in
+`bin/ffmpeg/<os>-<arch>/` from signed sources at ffmpeg.org. The system FFmpeg is
+left unchanged. `update` reuses a working local build when it is current;
+`install` rebuilds it. Windows uses the FFmpeg libraries bundled with Liquidsoap.
+The platform requirements above still apply to the complete installation.
 
 ### Initial configuration
 
@@ -120,24 +104,40 @@ the matching `streamadminpassword_N` or global `adminpassword` in `sc_serv.conf`
 
 ### System dependencies and external runtimes
 
-Native dependency inspection is required. Linux and FreeBSD use `ldd`; macOS
-uses `otool` from Xcode Command Line Tools. Windows dependencies are read from
-the executable's PE imports. Managed Windows packages can be repaired by
-reinstalling; replacement binaries must pass validation.
+The installer checks native libraries with `ldd` on Linux and FreeBSD, `otool`
+on macOS, and the executable's PE imports on Windows. Linux SHOUTcast on FreeBSD
+uses the Linux loader instead of native `ldd`. On macOS, `otool` requires Xcode
+Command Line Tools. Damaged managed Windows packages can be reinstalled, then
+must pass the same checks.
 
 Suggested dependency commands use APT, DNF, pacman, FreeBSD `pkg`, Homebrew
 or WinGet, where a package mapping is known. Run Homebrew without sudo.
 Unknown libraries or incompatible library versions require a matching vendor
 build; do not substitute DLLs or symlink incompatible library versions.
 
-On macOS and FreeBSD, supply a compatible licensed SHOUTcast executable.
+On FreeBSD x64, enable [Linuxulator](https://docs.freebsd.org/en/books/handbook/linuxemu/)
+and install its Linux userland as root before installing the radio runtimes:
+
+```sh
+sysrc linux_enable="YES"
+service linux start
+pkg install linux_base-rl9
+```
+
+Then run `npm run install:freebsd` as the service account. The installer checks
+kernel support, the Linux loader and userland execution before downloading or
+compiling anything. SHOUTcast stays in `bin/shoutcast/freebsd-x64/`; its Linux
+libraries are checked through the loader under `/compat/linux`, not native FreeBSD
+`ldd`. Liquidsoap and FFmpeg remain native FreeBSD builds. No CPU emulation is
+provided for FreeBSD ARM or 32-bit hosts. Externally supplied SHOUTcast binaries,
+including older installations without a managed Linuxulator manifest, are preserved.
+
 When no matching binary exists for the latest Liquidsoap release, the installer
 uses [OPAM](https://www.liquidsoap.info/doc-2.4.5/install#install-using-opam)
-to compile that exact version from the official release sources. Install OPAM 2.1 or newer,
-a C compiler, Bash, make (`gmake` on FreeBSD), `pkg-config`, and development files for
-curl and libffi first. Local FFmpeg compilation also needs GnuPG, tar, xz, NASM on
-Intel CPUs, and development files for LAME, OpenSSL and zlib. The installer lists
-missing requirements and the appropriate OS package commands before building.
+to build it from official sources. Install OPAM 2.1 or newer, a C compiler, Bash,
+make (`gmake` on FreeBSD), `pkg-config`, and development files for curl and libffi.
+FFmpeg compilation also needs GnuPG, tar, xz, NASM on Intel CPUs, and development
+files for LAME, OpenSSL and zlib.
 `-dev` and `-devel` packages contain compilation headers for released libraries;
 they are not nightly builds.
 
@@ -163,25 +163,20 @@ Source builds run as the service account with a private OPAM root inside the
 platform directory, for example `bin/liquidsoap/linux-x64/opam/`. The launcher
 and manifest live in `bin/liquidsoap/linux-x64/runtime/`; macOS and FreeBSD use
 their own platform directories. Official binary packages do not use OPAM.
-The account's existing OPAM switches are untouched. Builds require additional time and disk
-space. Checksums remain enabled; system packages are never installed by the
-controller. A failed build leaves the previous active runtime in place.
-Keep the repository at the same absolute path after a source build; rebuild
-Liquidsoap if it is moved. Do not run OPAM as root.
-Older layouts remain readable, so an up-to-date `update` does not trigger a
-rebuild just to rearrange folders. `install`, or a necessary source update,
-builds in the platform-specific location before removing the previous switch.
-The old shared `bin/liquidsoap/opam/` is removed only after no switches remain
-and it contains only recognized OPAM metadata; other platforms and unknown files
-are preserved. Do not move existing OPAM folders manually.
-After successful source installation or validation, unused managed OPAM switches
-and build/download caches are cleaned. FFmpeg builds keep their fixed paths while
-in use; registered older builds are removed only after the active Liquidsoap uses
-the current build and no uncertain switches or recovery directories remain.
-Failed updates retain the libraries needed by the previous Liquidsoap. Unrecognized
-older directories and redirected paths are not deleted automatically; cleanup
-failures report a warning without invalidating the installed runtime.
-Unix source builds require a project path without spaces or shell-special characters.
+The account's existing OPAM switches are untouched. Builds take time and need
+extra disk space; a failed build leaves the previous runtime in place. Use a
+project path without spaces or shell-special characters, and keep that absolute
+path after building. Rebuild Liquidsoap if the repository moves. Do not run OPAM
+as root or move its folders manually.
+
+Older layouts are migrated during reinstall or a required source update, not
+just because a newer layout exists. The old shared `bin/liquidsoap/opam/` is
+removed only when it has no remaining switches or unrecognized files.
+Successful source installations clean unused managed switches and build caches.
+Older FFmpeg builds are kept until Liquidsoap uses the current build and no
+uncertain switches or recovery directories remain. This preserves the libraries
+needed by the previous Liquidsoap if an update fails. Unrecognized directories
+and redirected paths are left alone; cleanup failures produce a warning.
 
 For a POSIX shell:
 
@@ -191,11 +186,11 @@ npm run install
 npm run doctor
 ```
 
-To supply your own Liquidsoap instead, set `LIQUIDSOAP_BIN` explicitly and keep
-its full runtime and service environment. Installation verifies it against the
-latest stable release; an outdated override must be updated or unset.
-A manual DNAS binary can also reside at `bin/shoutcast/<os>-<arch>/sc_serv`.
-Supplied SHOUTcast binaries remain externally managed, even inside `bin/`.
+Use `SC_SERV_BIN` for a manually installed DNAS binary, including one inside
+`bin/`, to prevent the installer from replacing it. To supply Liquidsoap, set
+`LIQUIDSOAP_BIN` and keep its runtime libraries and service environment available.
+Installation checks it against the latest stable release; update an outdated
+override or unset it to use the managed version.
 
 ## Operation
 
@@ -234,15 +229,15 @@ SHOUTcast also has `windows:x86` variants. The selection must match the host.
 
 ### Controller locks
 
-Lifecycle and runtime changes share `.run/control.lock` and wait up to 30 seconds.
-Waiting messages identify the operation and PID. Registrations in
-`.run/control-locks/` coordinate startup and abandoned-lock recovery.
+Start, stop, restart and maintenance commands share `.run/control.lock` and wait
+up to 30 seconds. Waiting messages show the operation and PID.
+`.run/control-locks/` tracks pending startups and helps recover abandoned locks.
 Use one local run directory for all commands controlling an instance.
 
-A live owner is never evicted. Abandoned locks are recovered only after the
-owner and registered startup supervisors have exited or finished. Corrupt
-records, interrupted external installers and uncertain engine startup require
-manual verification.
+The controller does not take a lock from a running process. It recovers an
+abandoned lock only after the owner and pending startups have exited or finished.
+Corrupt records, interrupted external installers and uncertain startups require
+manual checks.
 
 Before removing a reported lock or registration, stop restart loops and confirm
 both engines and all controller operations are stopped. Never remove the
@@ -354,8 +349,7 @@ changes with `npm run autodj:restart`; `npm run playlist` only updates track lis
 
 Default output is stereo MP3 at 320 kbps / 48 kHz. Higher-rate input is decoded
 and resampled. MP3 output does not support 96/192 kHz; the AutoDJ template lists
-valid bitrate/sample-rate combinations. Loudness normalization changes audio
-levels, not text encoding.
+valid bitrate/sample-rate combinations.
 
 Valid Unicode tags are preserved. Titles use `Artist - Title` when both tags
 exist, falling back to the filename without its extension when tags are missing.
@@ -415,10 +409,10 @@ npm start
 npm run autodj:start
 ```
 
-No Git installation is required. Downloads are pinned to one commit and checked
-against Git blob hashes. Each file's status and a final count are printed.
-Only status words are colored: `SKIP` gray, `ADDED`/`UPDATED` green,
-`REMOVED`/`RESTORE` yellow and `LOCAL` red. Brackets and filenames are uncolored.
+No Git installation is required. The updater downloads one pinned commit,
+checks each file against its Git blob hash and prints a summary of the changes.
+File statuses are colored: `SKIP` gray, `ADDED`/`UPDATED` green,
+`REMOVED`/`RESTORE` yellow and `LOCAL` red.
 
 Managed files include `app/`, `tests/`, entrypoints, package metadata,
 Git attributes/ignore rules and `.example` templates. `README.md` and `LICENSE`
@@ -444,8 +438,8 @@ recovery; if the controller cannot run, restore the saved transaction and backup
 Backups and state live in `.run/code-update/`, independent of `RADIO_RUN_DIR`.
 Keep the latest transaction and backup until deployment is validated.
 Code updates do not install dependencies, update runtimes, execute downloaded
-scripts or restart services. Hash verification checks integrity, not whether
-a commit is suitable for deployment.
+scripts or restart services. Hashes verify the download; review code changes
+before deploying them.
 
 ### Runtime binaries
 
@@ -460,24 +454,28 @@ npm start
 npm run autodj:start
 ```
 
-Both `install` and `update` check the latest stable official Liquidsoap and
-compatible FFmpeg releases before changing runtimes. Rolling and prerelease builds are excluded.
-A matching official binary is preferred; Unix hosts without one build the same
-version through OPAM. There is no fallback to an older release or a package
-for another distribution. Lookup or prerequisite failures stop the operation.
-`install` installs missing components and reinstalls managed components already
-present, even at the same version. `update` keeps validated current components
-and only installs missing, changed or damaged ones. FFmpeg and Liquidsoap updates
-refuse an automatic downgrade if the release catalogue is older than the installed
-version. A new local FFmpeg build also requires rebuilding a managed source-based
-Liquidsoap to link it to the new libraries. Configs and playlists are preserved.
-Windows updates FFmpeg through its Liquidsoap bundle.
+`install` and `update` use stable official releases, not rolling or prerelease
+builds. A matching Liquidsoap binary is preferred; Unix hosts without one build
+the same version through OPAM. Failed release lookups or missing prerequisites
+stop the operation rather than selecting an older or mismatched package.
+
+`install` reinstalls managed components, even at the same version. `update`
+keeps working, current components and installs missing, changed or damaged ones.
+FFmpeg and Liquidsoap updates refuse an automatic downgrade. When a local FFmpeg
+build changes, source-built Liquidsoap is rebuilt against it. Configurations and
+playlists are preserved. On Windows, FFmpeg is updated with the Liquidsoap bundle.
 
 Liquidsoap assets are checked against published SHA-256 digests or recorded
 checksums. SHOUTcast uses the official HTTPS distribution and a locally recorded
 digest, not a separate vendor signature. Its `latest` package is downloaded for
 comparison during update; an identical digest skips installation, and the download
 is then cleaned up. Keep TLS verification enabled.
+
+Successful installations remove recognized downloads, including older archives,
+and their empty directories. Unrelated files are kept. Failed installations keep
+their packages for troubleshooting. Liquidsoap's Debian package dependencies are
+saved in its runtime manifest; older installations keep their active archive
+until a reinstall records that information.
 
 Packages are staged and validated where supported. Windows SHOUTcast uses the
 vendor's interactive installer. The two engine updates are separate operations,
@@ -531,14 +529,21 @@ Run `npm test` for unit and integration tests. Platform tests cover detection,
 command routing and installer decisions. Set `LIQUIDSOAP_TEST_BIN` to enable
 native tests against local test servers (scheduled playback tests require
 Liquidsoap >=2.4.5); `LIQUIDSOAP_TEST_RESOURCES` also tests
-the relocated Linux standard library. Tests without a required native runtime
-are skipped. Test results do not replace deployment checks.
+the relocated Linux standard library. Set `SHOUTCAST_TEST_BIN` to check DNAS
+startup, restart and shutdown through the controller. With both executables set,
+tests also check MP3 streaming and UTF-8 metadata on isolated local ports.
+Tests without a required runtime are skipped. Test results do not replace
+deployment checks.
 
-GitHub Actions runs one job per test system: Ubuntu 22.04, Windows Server 2022,
-macOS 14, FreeBSD 14.4 and Fedora 44. Each job checks the managed runtime installer,
-the full test suite and repeated native playback regressions. FreeBSD and Fedora
-run in separate virtual machines. Ubuntu also checks that installing local FFmpeg
-leaves the distribution's FFmpeg 4.x unchanged.
+GitHub Actions runs one job each for Ubuntu 22.04, Windows Server 2022, macOS 14,
+FreeBSD 14.4 and Fedora 44. All jobs check the Liquidsoap/FFmpeg installer, run the
+test suite and repeat the native playback tests. FreeBSD and Fedora run in virtual
+machines. Ubuntu also checks that the system FFmpeg 4.x remains unchanged.
+
+Real SHOUTcast installation and streaming tests run on Ubuntu and FreeBSD x64.
+FreeBSD uses Linuxulator for DNAS, with native Liquidsoap and FFmpeg. The Windows,
+macOS and Fedora jobs test the controller and Liquidsoap but do not run a real
+DNAS stream. A passing macOS job does not imply native SHOUTcast support.
 
 ### Environment
 

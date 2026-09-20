@@ -172,13 +172,35 @@ for (const family of ["linux", "windows", "macos", "freebsd"]) {
     }
 }
 
-for (const [family, architecture] of [["macos", "x64"], ["macos", "arm64"], ["freebsd", "x64"], ["freebsd", "arm64"], ["linux", "arm64"], ["windows", "arm64"]]) {
+for (const [family, architecture] of [["macos", "x64"], ["macos", "arm64"], ["freebsd", "arm64"], ["linux", "arm64"], ["windows", "arm64"]]) {
     test(`${family}-${architecture} cannot install AutoDJ alone when SHOUTcast has no available binary`, async (context) => {
         const fixture = platformFixture(context, family, architecture, false);
         await assert.rejects(installRuntime({ acceptLicense: true }), /No current official SHOUTcast package.*complete radio stack/);
         assert.equal(fixture.preflight.mock.callCount(), 0);
         assert.equal(fixture.radio.mock.callCount(), 0);
         assert.equal(fixture.autodj.mock.callCount(), 0);
+    });
+}
+
+for (const ready of [false, true]) {
+    test(`FreeBSD Linuxulator is ${ready ? "validated before installation" : "required before any downloads or builds"}`, async (context) => {
+        const fixture = platformFixture(context, "freebsd", "x64", false);
+        const lines = [];
+        context.mock.method(console, "log", (line) => lines.push(line));
+        context.mock.method(require("../app/linuxulator"), "requirements", () => ({
+            items: [{ id: "compatibility:linux64", label: "Linuxulator x64 kernel support", found: ready, detail: ready ? "enabled" : "not enabled" }],
+            missing: ready ? [] : ["Linuxulator"],
+        }));
+        if (ready) {
+            await installRuntime({ acceptLicense: true });
+            assert.equal(fixture.radio.mock.callCount(), 1);
+        } else {
+            await assert.rejects(installRuntime({ acceptLicense: true }), /requires Linuxulator/);
+            assert.equal(fixture.plan.mock.callCount(), 0);
+            assert.equal(fixture.radio.mock.callCount(), 0);
+            assert.equal(fixture.autodj.mock.callCount(), 0);
+            assert.match(lines.join("\n"), /MISSING Linuxulator[\s\S]*pkg install linux_base-rl9[\s\S]*Runtime requirements/);
+        }
     });
 }
 

@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const linuxulator = require("./linuxulator");
 
 const PROBE_OPTIONS = {
     encoding: "utf8", timeout: 15000, windowsHide: true,
@@ -118,12 +119,14 @@ function inspect(binary, profile, {
     let checked = false;
     let architecture = profile.architecture;
     let diagnostic = "";
+    const compatibility = profile.family === "freebsd" && linuxulator.isLinuxBinary(binary, readFile) ? "linuxulator" : null;
     if (["linux", "freebsd"].includes(profile.family)) {
-        const result = run("ldd", [binary], { ...PROBE_OPTIONS, env: { ...environment, LC_ALL: "C" } });
+        const result = compatibility ? linuxulator.inspect(binary, run, environment)
+            : run("ldd", [binary], { ...PROBE_OPTIONS, env: { ...environment, LC_ALL: "C" } });
         diagnostic = `${result.error?.message || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.trim();
         libraries = parseLdd(diagnostic);
         checked = !result.error && (result.status === 0 || libraries.length > 0);
-        if (!result.error && !libraries.length && /statically linked|not a dynamic executable/.test(diagnostic)) {
+        if (!compatibility && !result.error && !libraries.length && /statically linked|not a dynamic executable/.test(diagnostic)) {
             // ldd can report plain text or a foreign executable as non-dynamic
             checked = false;
             try {
@@ -185,11 +188,11 @@ function inspect(binary, profile, {
         else libraries.push({ name, found: false });
     }
     const abiError = /version [`'][^\r\n]+not found|wrong ELF class|incompatible architecture|Bad CPU type|0xc000007b/i.test(`${detail}\n${diagnostic}`);
-    const inspectionTool = profile.family === "macos" ? "otool (Xcode Command Line Tools)"
+    const inspectionTool = compatibility ? "the Linuxulator dynamic loader" : profile.family === "macos" ? "otool (Xcode Command Line Tools)"
         : profile.family === "windows" ? "the PE import reader" : "ldd";
     const inspectionError = !checked
         ? `Could not inspect native dependencies with ${inspectionTool}. Ensure the executable matches this OS and architecture${profile.family !== "windows" ? " and the inspection tool is available" : ""}${diagnostic ? `: ${diagnostic}` : ""}` : "";
-    return { checked, architecture, libraries, missing: libraries.filter((item) => !item.found).map((item) => item.name), abiError, inspectionError };
+    return { checked, architecture, libraries, missing: libraries.filter((item) => !item.found).map((item) => item.name), abiError, inspectionError, ...(compatibility ? { compatibility } : {}) };
 }
 
 function statusItems(label, report, { includeFound = false } = {}) {
@@ -211,7 +214,7 @@ function statusItems(label, report, { includeFound = false } = {}) {
 function printStatus(label, report, {
     color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
 } = {}) {
-    console.log(`  ${label} native libraries:`);
+    console.log(`  ${label} ${report?.compatibility === "linuxulator" ? "Linux libraries (FreeBSD Linuxulator)" : "native libraries"}:`);
     if (!report) {
         console.log(`    NOT CHECKED: ${label} executable is not available; libraries will be checked after extraction or installation.`);
         return;
@@ -364,6 +367,11 @@ function ffmpegInstallationHelp(profile, {
 }
 
 function assertAvailable(label, profile, report, options = {}) {
+    if (report?.compatibility === "linuxulator" && (report.inspectionError || report.missing.length || report.abiError)) {
+        const error = new Error(`${label}: ${report.inspectionError || `Missing or incompatible Linux libraries: ${report.missing.join(", ")}`}\n${linuxulator.installationHelp(options)}`);
+        error.code = "RADIO_OS_DEPENDENCIES";
+        throw error;
+    }
     if (report?.inspectionError) {
         const error = new Error(`${label}: ${report.inspectionError}`);
         error.code = "RADIO_NATIVE_INSPECTION";

@@ -44,7 +44,7 @@ test("SHOUTcast checks tar and the GNU tar gzip helper only for managed Linux ar
     for (const source of ["PATH", "SC_SERV_BIN", "external"]) {
         assert.deepEqual(getInstallRequirements(profile, { found: true, source }, { run: () => assert.fail("external binary needs no tar") }).items, []);
     }
-    for (const id of ["windows-x64", "macos-arm64", "freebsd-x64"]) {
+    for (const id of ["windows-x64", "macos-arm64", "freebsd-arm64"]) {
         assert.deepEqual(getInstallRequirements({ id }, { found: false }, { run: () => assert.fail("no managed tar archive") }).items, []);
     }
 });
@@ -60,9 +60,11 @@ test("selects official latest SHOUTcast downloads for supported platforms", () =
     }
 });
 
-test("does not invent a current SHOUTcast package for macOS or FreeBSD", () => {
+test("FreeBSD x64 uses the official Linux archive without inventing native or ARM builds", () => {
     assert.equal(getPackage({ family: "macos", architecture: "arm64", id: "macos-arm64" }), null);
-    assert.equal(getPackage({ family: "freebsd", architecture: "x64", id: "freebsd-x64" }), null);
+    assert.equal(getPackage({ family: "freebsd", architecture: "arm64", id: "freebsd-arm64" }), null);
+    assert.equal(getPackage({ id: "freebsd-x86" }), null);
+    assert.deepEqual(getPackage({ id: "freebsd-x64" }), getPackage({ id: "linux-x64" }));
 });
 
 for (const family of ["macos", "freebsd"]) {
@@ -129,6 +131,10 @@ function installationFixture(context, family = "linux", existing = false) {
     context.mock.method(console, "log", () => {});
     const warnings = context.mock.method(console, "warn", () => {});
     const profile = { family, architecture: "x64", id: `${family}-x64` };
+    if (family === "freebsd") {
+        context.mock.method(require("../app/linuxulator"), "requirements", () => ({ items: [], missing: [] }));
+        context.mock.method(require("../app/linuxulator"), "isLinuxBinary", () => true);
+    }
     const packageInfo = getPackage(profile, serverRoot);
     const directory = path.join(serverRoot, "bin", "shoutcast", profile.id);
     const binary = path.join(directory, family === "windows" ? "sc_serv.exe" : "sc_serv");
@@ -138,7 +144,7 @@ function installationFixture(context, family = "linux", existing = false) {
     if (existing) {
         fs.mkdirSync(directory, { recursive: true });
         fs.writeFileSync(binary, "previous runtime");
-        fs.writeFileSync(manifest, JSON.stringify({ sha256: digest }));
+        fs.writeFileSync(manifest, JSON.stringify({ url: packageInfo.url, sha256: digest, ...(family === "freebsd" ? { compatibility: "linuxulator" } : {}) }));
     }
     context.mock.method(platform, "resolveProfile", () => profile);
     context.mock.method(platform, "resolveShoutcastBinary", () => ({ found: fs.existsSync(binary), path: binary, source: "platform" }));
@@ -152,7 +158,7 @@ function installationFixture(context, family = "linux", existing = false) {
     });
     const run = context.mock.fn((command, args) => {
         assert.ok(fs.existsSync(packageInfo.filePath));
-        if (family === "linux") {
+        if (family !== "windows") {
             assert.equal(command, "tar");
             fs.writeFileSync(path.join(args[3], "sc_serv"), "new runtime");
         } else {
@@ -165,7 +171,7 @@ function installationFixture(context, family = "linux", existing = false) {
     return { serverRoot, binary, manifest, digest, packageInfo, run, warnings };
 }
 
-for (const family of ["linux", "windows"]) {
+for (const family of ["linux", "windows", "freebsd"]) {
     for (const force of [false, true]) {
         test(`${family} ${force ? "reinstall" : "first install"} removes SHOUTcast downloads only after successful activation`, async (context) => {
             const f = installationFixture(context, family, force);
@@ -191,10 +197,35 @@ test("matching installed SHOUTcast also removes the comparison download without 
     assert.equal(fs.existsSync(path.dirname(f.packageInfo.filePath)), false);
 });
 
-for (const family of ["linux", "windows"]) {
+test("matching managed Linuxulator SHOUTcast does not replace its binary", async (context) => {
+    const f = installationFixture(context, "freebsd", true);
+    await installShoutcast({ serverRoot: f.serverRoot, acceptLicense: true, run: f.run });
+    assert.equal(f.run.mock.callCount(), 0);
+    assert.equal(fs.readFileSync(f.binary, "utf8"), "previous runtime");
+    assert.equal(fs.existsSync(f.packageInfo.filePath), false);
+});
+
+test("FreeBSD preserves an installation without a complete managed Linuxulator receipt", async (context) => {
+    const f = installationFixture(context, "freebsd", true);
+    fs.writeFileSync(f.manifest, JSON.stringify({ compatibility: "linuxulator", sha256: f.digest }));
+    await installShoutcast({ serverRoot: f.serverRoot, acceptLicense: true, force: true, run: f.run });
+    assert.equal(f.run.mock.callCount(), 0);
+    assert.equal(fs.readFileSync(f.binary, "utf8"), "previous runtime");
+});
+
+test("FreeBSD rejects an incompatible archive before replacing managed SHOUTcast", async (context) => {
+    const f = installationFixture(context, "freebsd", true);
+    context.mock.method(require("../app/linuxulator"), "isLinuxBinary", () => false);
+    await assert.rejects(installShoutcast({ serverRoot: f.serverRoot, acceptLicense: true, force: true, run: f.run }), /expected Linux x64 executable/);
+    assert.equal(fs.readFileSync(f.binary, "utf8"), "previous runtime");
+    assert.equal(JSON.parse(fs.readFileSync(f.manifest)).sha256, f.digest);
+    assert.ok(fs.existsSync(f.packageInfo.filePath));
+});
+
+for (const family of ["linux", "windows", "freebsd"]) {
     test(`${family} SHOUTcast update installs a changed official package without forcing reinstall`, async (context) => {
         const f = installationFixture(context, family, true);
-        fs.writeFileSync(f.manifest, JSON.stringify({ sha256: "b".repeat(64) }));
+        fs.writeFileSync(f.manifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(f.manifest)), sha256: "b".repeat(64) }));
         await installShoutcast({ serverRoot: f.serverRoot, acceptLicense: true, force: false, run: f.run });
         assert.equal(f.run.mock.callCount(), 1);
         assert.equal(fs.readFileSync(f.binary, "utf8"), "new runtime");

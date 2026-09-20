@@ -6,6 +6,7 @@ const ffmpeg = require("./ffmpeg-runtime");
 const platform = require("./platform");
 const shoutcast = require("./shoutcast-package");
 const systemDependencies = require("./system-dependencies");
+const linuxulator = require("./linuxulator");
 
 const COLORS = {
     green: "\u001b[32m",
@@ -24,6 +25,7 @@ function getRuntimeStatus(serverRoot = path.resolve(__dirname, "..")) {
     const dependencyStatus = dependencies.getDependencyStatus({ serverRoot, runtimeProfile });
     const shoutcastLibraries = shoutcastBinary.found
         ? systemDependencies.inspect(shoutcastBinary.path, runtimeProfile) : null;
+    const shoutcastCompatibility = linuxulator.requirements(runtimeProfile, shoutcastBinary);
     return {
         dependencyStatus,
         shoutcastBinary,
@@ -35,10 +37,12 @@ function getRuntimeStatus(serverRoot = path.resolve(__dirname, "..")) {
                 detail: shoutcastBinary.found ? shoutcastBinary.path : "not found",
             },
             ...systemDependencies.statusItems("SHOUTcast", shoutcastLibraries),
+            ...shoutcastCompatibility.items,
             ...dependencyStatus.items,
         ],
         runtimeProfile,
         shoutcastLibraries,
+        shoutcastCompatibility,
     };
 }
 
@@ -55,6 +59,10 @@ function printRuntimeStatus(status, {
         const name = { linux: "Linux", windows: "Windows", macos: "macOS", freebsd: "FreeBSD" }[status.runtimeProfile.family] || status.runtimeProfile.id;
         console.log(`${name} system dependencies (SHOUTcast and Liquidsoap):`);
         systemDependencies.printStatus("SHOUTcast", status.shoutcastLibraries, { color });
+        if (status.shoutcastCompatibility?.items.length) {
+            console.log("  SHOUTcast Linux compatibility:");
+            for (const item of status.shoutcastCompatibility.items) printItem(item, "    ");
+        }
         systemDependencies.printStatus("Liquidsoap", status.dependencyStatus?.nativeLibraries, { color });
         console.log(`  ${requirements.reason}:`);
         for (const item of requirements.items) {
@@ -79,9 +87,10 @@ function printRuntimeStatus(status, {
             console.log(systemDependencies.archiveInstallationHelp(status.runtimeProfile, requirements.archiveMissing, { color }));
         }
         const hints = new Set();
+        if (status.shoutcastCompatibility?.missing.length) hints.add(linuxulator.installationHelp({ color }));
         for (const report of [status.shoutcastLibraries, status.dependencyStatus?.nativeLibraries]) {
             if (report && (report.missing.length || report.abiError)) {
-                hints.add(systemDependencies.installationHelp({ ...status.runtimeProfile, architecture: report.architecture || status.runtimeProfile.architecture }, {
+                hints.add(report.compatibility === "linuxulator" ? linuxulator.installationHelp({ color }) : systemDependencies.installationHelp({ ...status.runtimeProfile, architecture: report.architecture || status.runtimeProfile.architecture }, {
                     missing: report.missing, abiError: report.abiError, debianDepends: report.debianDepends, color,
                 }));
             }
@@ -94,7 +103,7 @@ function printRuntimeStatus(status, {
     }
     console.log(`Runtime requirements for ${status.runtimeProfile.id}:`);
     for (const item of status.items) {
-        if (!requirements || !/^(native|abi|inspection):/.test(item.id || "")) printItem(item);
+        if (!requirements || !/^(native|abi|inspection|compatibility):/.test(item.id || "")) printItem(item);
     }
 }
 
@@ -169,6 +178,9 @@ async function installRuntime({
         }
         if (!status.shoutcastBinary.found && !shoutcast.getPackage(status.runtimeProfile, serverRoot)) {
             throw new Error(`No current official SHOUTcast package is available for ${status.runtimeProfile.id}; the complete radio stack cannot be installed on this host. Supply a compatible licensed SHOUTcast executable through SC_SERV_BIN before installing AutoDJ, or use a platform supported by both engines.`);
+        }
+        if (status.shoutcastCompatibility.missing.length) {
+            throw new Error("SHOUTcast on FreeBSD requires Linuxulator and its Linux userland. Install the listed OS requirements before retrying; no runtimes were replaced.");
         }
         // Select the exact installation path before requiring any source-build tools.
         ffmpegPlan = await ffmpeg.prepare(serverRoot, status.runtimeProfile, { force });

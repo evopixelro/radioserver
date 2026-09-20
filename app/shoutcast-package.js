@@ -4,6 +4,7 @@ const { spawnSync } = require("node:child_process");
 const download = require("./download");
 const platform = require("./platform");
 const systemDependencies = require("./system-dependencies");
+const linuxulator = require("./linuxulator");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const { cleanupRuntimeDirectory, renameRuntimeDirectory } = require("./runtime-cleanup");
 
@@ -32,7 +33,7 @@ const SHOUTCAST_PACKAGES = {
 };
 
 function getPackage(runtimeProfile, serverRoot = path.resolve(__dirname, "..")) {
-    const specification = SHOUTCAST_PACKAGES[runtimeProfile.id];
+    const specification = SHOUTCAST_PACKAGES[runtimeProfile.id === "freebsd-x64" ? "linux-x64" : runtimeProfile.id];
     if (!specification) return null;
     return {
         ...specification,
@@ -56,8 +57,9 @@ function verifyPackage(packageInfo) {
 }
 
 function getInstallRequirements(runtimeProfile, existing, { run = spawnSync } = {}) {
-    const specification = SHOUTCAST_PACKAGES[runtimeProfile.id];
-    if (specification?.kind !== "archive" || (existing.found && ["PATH", "SC_SERV_BIN", "external"].includes(existing.source))) {
+    const specification = getPackage(runtimeProfile);
+    if (specification?.kind !== "archive" || (existing.found && (["PATH", "SC_SERV_BIN", "external"].includes(existing.source) ||
+            (runtimeProfile.family === "freebsd" && !linuxulator.isLinuxBinary(existing.path))))) {
         return { items: [], missing: [] };
     }
     const options = { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true };
@@ -167,6 +169,9 @@ function installLinuxPackage(packageInfo, serverRoot, runtimeProfile, run) {
             throw new Error(`SHOUTcast archive did not contain the expected executable: ${binaryPath}`);
         }
         fs.chmodSync(binaryPath, 0o755);
+        if (runtimeProfile.id === "freebsd-x64" && !linuxulator.isLinuxBinary(binaryPath)) {
+            throw new Error("The SHOUTcast package is not the expected Linux x64 executable for Linuxulator.");
+        }
         const libraries = systemDependencies.inspect(binaryPath, runtimeProfile);
         systemDependencies.printStatus("SHOUTcast", libraries);
         systemDependencies.assertAvailable("SHOUTcast", runtimeProfile, libraries);
@@ -219,7 +224,11 @@ async function installShoutcast({
     const runtimeProfile = platform.resolveProfile();
     const existing = platform.resolveShoutcastBinary(serverRoot, runtimeProfile);
     const packageInfo = getPackage(runtimeProfile, serverRoot);
-    if (existing.found && (!packageInfo || ["PATH", "SC_SERV_BIN", "external"].includes(existing.source))) {
+    const manifestPath = path.join(serverRoot, "bin", "shoutcast", runtimeProfile.id, "runtime.json");
+    const installed = readRuntimeManifest(manifestPath);
+    const managedLinuxulator = installed.compatibility === "linuxulator" && installed.url === packageInfo?.url && /^[a-f0-9]{64}$/.test(installed.sha256 || "");
+    const suppliedFreebsd = runtimeProfile.family === "freebsd" && !managedLinuxulator;
+    if (existing.found && (!packageInfo || suppliedFreebsd || ["PATH", "SC_SERV_BIN", "external"].includes(existing.source))) {
         if (force) {
             console.log(`SHOUTcast is externally managed and was not modified: ${existing.path}`);
             return existing.path;
@@ -233,11 +242,11 @@ async function installShoutcast({
             `No current official SHOUTcast package is published for ${runtimeProfile.id}. Set SC_SERV_BIN to a compatible executable.`,
         );
     }
+    const compatibility = linuxulator.requirements(runtimeProfile, existing);
+    if (compatibility.missing.length) throw new Error(`SHOUTcast Linux compatibility is not ready: ${compatibility.missing.join(", ")}\n${linuxulator.installationHelp()}`);
     ensureLicenseAccepted(acceptLicense, serverRoot);
     console.log(`Downloading SHOUTcast from its official distribution host for ${runtimeProfile.id}...`);
     await downloadPackage(packageInfo);
-    const manifestPath = path.join(serverRoot, "bin", "shoutcast", runtimeProfile.id, "runtime.json");
-    const installed = readRuntimeManifest(manifestPath);
     if (existing.found && installed.sha256 === packageInfo.sha256 && !force) {
         console.log(`SHOUTcast already matches the official latest download: ${existing.path}`);
         cleanupDownloads(serverRoot);
@@ -247,7 +256,9 @@ async function installShoutcast({
         ? installLinuxPackage(packageInfo, serverRoot, runtimeProfile, run)
         : installWindowsPackage(packageInfo, serverRoot, runtimeProfile, run);
     fs.mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o750 });
-    fs.writeFileSync(manifestPath, `${JSON.stringify({ url: packageInfo.url, sha256: packageInfo.sha256 }, null, 2)}\n`, { mode: 0o640 });
+    fs.writeFileSync(manifestPath, `${JSON.stringify({ url: packageInfo.url, sha256: packageInfo.sha256,
+        ...(runtimeProfile.id === "freebsd-x64" ? { compatibility: "linuxulator" } : {}),
+    }, null, 2)}\n`, { mode: 0o640 });
     cleanupDownloads(serverRoot);
     return binary;
 }

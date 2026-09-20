@@ -55,7 +55,12 @@ jobs:
         shell: bash
         env:
           LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
-        run: node .github/scripts/install-liquidsoap.js "$RUNNER_TEMP/radio-installer"
+        run: |
+          set -euo pipefail
+          node .github/scripts/install-liquidsoap.js "$RUNNER_TEMP/radio-installer"
+          if [ "$RUNNER_OS" = Linux ]; then
+            node .github/scripts/install-shoutcast.js "$RUNNER_TEMP/radio-installer"
+          fi
       - name: Run tests
         run: node --test --test-reporter=tap
       - name: Repeat native playback regressions
@@ -71,7 +76,7 @@ jobs:
         run: test "$(ffmpeg -version | head -n1 | cut -d' ' -f3 | cut -d. -f1)" = 4
 
   freebsd:
-    name: Native / FreeBSD
+    name: FreeBSD / Linuxulator
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     steps:
@@ -88,7 +93,10 @@ jobs:
           cpu: 2
           copyback: false
           prepare: |
-            pkg install -y node22 ocaml-opam bash curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl
+            set -eu
+            sysrc linux_enable="YES"
+            service linux start
+            pkg install -y linux_base-rl9 node22 ocaml-opam bash curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl
             pw useradd radio-test -m -s /bin/sh
           run: |
             set -eu
@@ -99,6 +107,9 @@ jobs:
               IFS= read -r LIQUIDSOAP_CI_GITHUB_TOKEN
               export LIQUIDSOAP_CI_GITHUB_TOKEN
               cd /home/radio-test/radioserver
+              node .github/scripts/install-shoutcast.js /home/radio-test/radio-runtime
+              export SHOUTCAST_TEST_BIN=/home/radio-test/radio-runtime/bin/shoutcast/freebsd-x64/sc_serv
+              (unset LIQUIDSOAP_CI_GITHUB_TOKEN; node --test --test-reporter=tap tests/shoutcast-runtime.test.js)
               node .github/scripts/install-liquidsoap.js /home/radio-test/radio-runtime
               unset LIQUIDSOAP_CI_GITHUB_TOKEN
               export LIQUIDSOAP_TEST_BIN=/home/radio-test/radio-runtime/bin/liquidsoap/freebsd-x64/runtime/liquidsoap
