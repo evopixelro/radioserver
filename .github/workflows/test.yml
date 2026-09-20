@@ -67,6 +67,8 @@ jobs:
       - name: Validate the managed installer
         if: runner.os != 'macOS'
         shell: bash
+        env:
+          LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
         run: node .github/scripts/install-liquidsoap.js "$RUNNER_TEMP/radio-installer"
       - name: Run tests
         run: node --test --test-reporter=tap
@@ -142,6 +144,8 @@ jobs:
           brew install opam ffmpeg pkg-config libffi
           echo "PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
       - name: Install the latest official Liquidsoap
+        env:
+          LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
         run: node .github/scripts/install-liquidsoap.js "$RUNNER_TEMP/radio-installer"
       - name: Validate native playback with the compiled runtime
         run: node --test --test-reporter=tap tests/liquidsoap-runtime.test.js tests/autodj-playlist.test.js tests/autodj-reconnect.test.js tests/playlist-schedule-runtime.test.js

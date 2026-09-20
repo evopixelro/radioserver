@@ -4,8 +4,18 @@ const path = require("node:path");
 const dependencies = require("../../app/dependencies");
 const platform = require("../../app/platform");
 const runtime = require("../../app/liquidsoap-runtime");
+const releases = require("../../app/liquidsoap-releases");
 
 async function main() {
+    // Hosted runners share public API limits. Keep the CI credential out of build processes.
+    const token = process.env.LIQUIDSOAP_CI_GITHUB_TOKEN;
+    delete process.env.LIQUIDSOAP_CI_GITHUB_TOKEN;
+    if (token) {
+        const lookup = releases.latestRelease;
+        releases.latestRelease = () => lookup((url, options) => globalThis.fetch(url, {
+            ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` },
+        }));
+    }
     assert.ok(process.argv[2] && path.isAbsolute(process.argv[2]), "Pass an absolute, isolated CI runtime directory");
     const serverRoot = process.argv[2];
     fs.mkdirSync(serverRoot, { recursive: true });
