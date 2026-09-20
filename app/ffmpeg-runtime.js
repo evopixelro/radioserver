@@ -176,10 +176,12 @@ async function install(serverRoot, profile, plan, {
             const result = run("pkg-config", [kind, "lame"], { ...capture, env });
             return !result.error && result.status === 0 ? String(result.stdout || "").trim() : "";
         };
+        // LAME's .pc file can expose include/lame for <lame.h>, but FFmpeg uses <lame/lame.h>.
+        const includeFlags = flags("--cflags-only-I").replace(/(^|\s)(-I\S+)\/lame(?=\s|$)/g, "$1$2/lame $2");
         command(path.join(source, "configure"), ["--cc=cc", `--prefix=${prefix}`, "--libdir=" + path.join(prefix, "lib"),
             "--enable-shared", "--enable-version3", "--disable-static", "--disable-doc", "--disable-debug", "--disable-ffplay",
             "--disable-autodetect", "--enable-pthreads", "--enable-openssl", "--enable-libmp3lame", "--enable-zlib",
-            "--enable-rpath", `--extra-cflags=${flags("--cflags-only-I")}`,
+            "--enable-rpath", `--extra-cflags=${includeFlags}`,
             `--extra-ldflags=-Wl,-rpath,${path.join(prefix, "lib")} ${flags("--libs-only-L")}`], { cwd: source, env });
         const make = profile.family === "freebsd" ? "gmake" : "make";
         command(make, ["-j2"], { cwd: source, env });

@@ -107,6 +107,20 @@ test("managed FFmpeg verifies signatures before extraction and activates only a 
     assert.equal(commands.some(({ command }) => ["sudo", "apt-get", "brew", "pkg"].includes(command)), false);
 });
 
+test("FFmpeg can include lame/lame.h when pkg-config exposes the nested LAME directory", async (context) => {
+    const { root, commands, options } = fixture(context);
+    const run = options.run;
+    options.run = (command, args, settings) => {
+        if (command === "pkg-config" && args[0] === "--cflags-only-I") {
+            return { status: 0, stdout: "-I/opt/homebrew/Cellar/lame/4.0/include/lame -I/other/include" };
+        }
+        return run(command, args, settings);
+    };
+    await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
+    const configuration = commands.find(({ command }) => path.basename(command) === "configure");
+    assert.ok(configuration.args.includes("--extra-cflags=-I/opt/homebrew/Cellar/lame/4.0/include/lame -I/opt/homebrew/Cellar/lame/4.0/include -I/other/include"));
+});
+
 for (const failure of ["key", "signature", "compile", "validation"]) {
     test(`FFmpeg ${failure} failure preserves the active manifest and removes only staging files`, async (context) => {
         const { root, manifest, options, commands } = fixture(context, failure);
