@@ -61,10 +61,6 @@ function commandExists(command, versionArguments = ["--version"]) {
     return !result.error && result.status === 0;
 }
 
-function isDebianFamily() {
-    return process.platform === "linux" && commandExists("apt-get") && commandExists("dpkg-query");
-}
-
 function debianPackageIsInstalled(packageName) {
     const result = spawnSync("dpkg-query", ["-W", "-f=${Status}", packageName], {
         encoding: "utf8",
@@ -281,7 +277,7 @@ function preflightInstall({
         if (profile.architecture !== "x64" && !canUseX64) {
             throw new Error(
                 `No official Liquidsoap binary package is available for ${profile.id}. ` +
-                    "Install Liquidsoap with OPAM and set LIQUIDSOAP_BIN.",
+                    "Supply a compatible current Windows build through LIQUIDSOAP_BIN.",
             );
         }
         return;
@@ -296,6 +292,14 @@ function preflightInstall({
         return;
     }
     // Source-build availability and the upstream version are checked before any downloads.
+}
+
+function extractWindowsArchive(archive, destination, { run = spawnSync, systemRoot = process.env.SystemRoot } = {}) {
+    if (!systemRoot || !path.win32.isAbsolute(systemRoot)) throw new Error("Windows SystemRoot is unavailable; cannot locate the native archive extractor.");
+    // Git Bash can put GNU tar ahead of Windows tar and interpret drive letters as remote hosts.
+    return run(path.win32.join(systemRoot, "System32", "tar.exe"), ["-xf", archive, "-C", destination], {
+        stdio: "inherit", windowsHide: true, timeout: 120000,
+    });
 }
 
 async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = false, packageInfo: selectedPackage } = {}) {
@@ -327,7 +331,7 @@ async function installWindowsLiquidsoap(serverRoot, runtimeProfile, { force = fa
     fs.mkdirSync(path.dirname(runtimeRoot), { recursive: true, mode: 0o750 });
     const stagingRoot = fs.mkdtempSync(path.join(path.dirname(runtimeRoot), "windows-x64.tmp-"));
     try {
-        const result = spawnSync("tar.exe", ["-xf", packageInfo.filePath, "-C", stagingRoot], { stdio: "inherit" });
+        const result = extractWindowsArchive(packageInfo.filePath, stagingRoot);
         const extractedRoot = path.join(stagingRoot, packageInfo.directoryName);
         const check = result.status === 0 && liquidsoapRuntime.checkRuntime(path.join(extractedRoot, "liquidsoap.exe"));
         if (!check || !check.ok) {
@@ -424,6 +428,7 @@ module.exports = {
     WINDOWS_LIQUIDSOAP_PACKAGE,
     activateRuntime,
     extractLinuxPackage,
+    extractWindowsArchive,
     debianPackageIsInstalled,
     debianPackageOwnsBinary,
     getDependencyStatus,

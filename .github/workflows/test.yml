@@ -130,7 +130,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y opam build-essential pkg-config bubblewrap m4 rsync git libffi-dev libcurl4-openssl-dev ffmpeg libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev
+          sudo apt-get install -y opam build-essential pkg-config bubblewrap m4 rsync git libffi-dev libcurl4-openssl-dev libmp3lame-dev ffmpeg libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev
+      - name: Reject obsolete libraries, then build compatible FFmpeg libraries
+        if: runner.os == 'Linux'
+        run: |
+          node -e 'require("node:assert/strict").throws(() => require("./app/liquidsoap-opam").prerequisites(require("./app/platform").resolveProfile()), /FFmpeg 7 or newer/);'
+          bash .github/scripts/build-ffmpeg.sh
       - name: macOS build prerequisites
         if: runner.os == 'macOS'
         run: |

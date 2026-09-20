@@ -27,7 +27,7 @@ for (const family of ["linux", "macos", "freebsd"]) {
                     assert.equal(options.env.OPAMROOT, path.join(parent, "opam"));
                     assert.equal(options.env.OPAMREQUIRECHECKSUMS, "1");
                 }
-                return { status: 0 };
+                return { status: 0, stdout: "2.1.0" };
             },
             validate: (binary) => ({ ok: fs.readFileSync(binary, "utf8") === "compiled latest runtime" }),
             verify: (_binary, version) => assert.equal(version, "2.4.5"),
@@ -61,7 +61,7 @@ for (const failure of ["compile", "validation", "version", "activation"]) {
             userId: 1000,
             run(_command, args) {
                 commands.push(args);
-                return { status: failure === "compile" && args[0] === "install" ? 1 : 0 };
+                return { status: failure === "compile" && args[0] === "install" ? 1 : 0, stdout: "2.1.0" };
             },
             validate: () => ({ ok: failure !== "validation", detail: "TEST_VALIDATION" }),
             verify: () => { if (failure === "version") throw new Error("TEST_VERSION"); },
@@ -83,4 +83,19 @@ test("missing build tools are reported without installing OS packages", () => {
     assert.throws(() => opam.prerequisites({ family: "freebsd" }, { userId: 1000,
         run: (command) => ({ status: command === "gmake" ? 1 : 0 }),
     }), /gmake.*does not install OS packages/);
+});
+
+test("source prerequisites reject obsolete OPAM and missing development libraries", () => {
+    const profile = { family: "linux", id: "linux-x64" };
+    for (const version of ["1.2.2", "2.0.10", "unknown"]) {
+        assert.throws(() => opam.prerequisites(profile, { userId: 1000,
+            run: () => ({ status: 0, stdout: version }),
+        }), /OPAM 2.1 or newer/);
+    }
+    assert.throws(() => opam.prerequisites(profile, { userId: 1000,
+        run: (_command, args) => ({ status: args[0] === "--exists" ? 1 : 0, stdout: "2.1.0" }),
+    }), /development libraries visible to pkg-config/);
+    assert.throws(() => opam.prerequisites(profile, { userId: 1000,
+        run: (_command, args) => ({ status: args[0] === "--atleast-version=59" ? 1 : 0, stdout: "2.1.0" }),
+    }), /FFmpeg 7 or newer.*no system packages were changed/);
 });

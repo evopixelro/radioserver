@@ -97,10 +97,13 @@ build; do not substitute DLLs or symlink incompatible library versions.
 On macOS and FreeBSD, supply a compatible licensed SHOUTcast executable.
 When no matching binary exists for the latest Liquidsoap release, the installer
 uses [OPAM](https://www.liquidsoap.info/doc-2.4.5/install#install-using-opam)
-to compile that exact version from the official release sources. Install OPAM,
+to compile that exact version from the official release sources. Install OPAM 2.1 or newer,
 a C compiler, make (`gmake` on FreeBSD), `pkg-config`, and development libraries
-for FFmpeg, curl and libffi first. Further build prerequisites are reported by
-OPAM. FFmpeg on `PATH` alone does not provide the development libraries.
+for FFmpeg 7 or newer, curl and libffi first. Older distributions may need newer
+FFmpeg libraries in a separate prefix, exposed through `PKG_CONFIG_PATH` and
+the runtime library search path. Keep that environment in the service manager.
+Further build prerequisites are reported by OPAM. FFmpeg on `PATH` alone does
+not provide the development libraries.
 
 Builds run as the service account in a private `bin/liquidsoap/opam` root, not
 the account's existing OPAM switches. They require additional time and disk

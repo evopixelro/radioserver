@@ -7,6 +7,7 @@ const test = require("node:test");
 const {
     activateRuntime,
     extractLinuxPackage,
+    extractWindowsArchive,
     getDependencyStatus,
     installDependencies,
     parseOsRelease,
@@ -26,6 +27,22 @@ test("parses Debian and Ubuntu os-release values", () => {
         distribution: "ubuntu",
         codename: "noble",
     });
+});
+
+test("Windows archive extraction bypasses Git Bash tar and preserves paths with spaces", () => {
+    const archive = "D:\\Radio server\\latest.zip";
+    const destination = "D:\\Radio server\\staging";
+    const result = extractWindowsArchive(archive, destination, { systemRoot: "C:\\Windows",
+        run(command, args, options) {
+            assert.equal(command, "C:\\Windows\\System32\\tar.exe");
+            assert.deepEqual(args, ["-xf", archive, "-C", destination]);
+            assert.equal(options.windowsHide, true);
+            assert.equal(options.timeout, 120000);
+            return { status: 0 };
+        },
+    });
+    assert.equal(result.status, 0);
+    assert.throws(() => extractWindowsArchive(archive, destination, { systemRoot: "" }), /SystemRoot/);
 });
 
 test("historical checksum records contain only official asset URLs and valid SHA-256", () => {
