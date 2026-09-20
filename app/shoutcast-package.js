@@ -5,7 +5,7 @@ const download = require("./download");
 const platform = require("./platform");
 const systemDependencies = require("./system-dependencies");
 const { readRuntimeManifest } = require("./runtime-manifest");
-const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
+const { cleanupRuntimeDirectory, renameRuntimeDirectory } = require("./runtime-cleanup");
 
 const LICENSE_URL = "https://www.shoutcast.com/legal/agreements/dnas";
 const SHOUTCAST_PACKAGES = {
@@ -132,11 +132,11 @@ function installLinuxPackage(packageInfo, serverRoot, runtimeProfile) {
         systemDependencies.assertAvailable("SHOUTcast", runtimeProfile, systemDependencies.inspect(binaryPath, runtimeProfile));
         const backup = `${staging}-previous`;
         const existed = fs.existsSync(installDirectory);
-        if (existed) fs.renameSync(installDirectory, backup);
+        if (existed) renameRuntimeDirectory(installDirectory, backup);
         try {
-            fs.renameSync(staging, installDirectory);
+            renameRuntimeDirectory(staging, installDirectory);
         } catch (error) {
-            if (existed) fs.renameSync(backup, installDirectory);
+            if (existed) renameRuntimeDirectory(backup, installDirectory);
             throw error;
         }
         if (existed) cleanupRuntimeDirectory(backup);

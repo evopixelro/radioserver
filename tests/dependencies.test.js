@@ -169,6 +169,49 @@ for (const outcome of ["success", "activation-failed", "rollback-failed"]) {
     });
 }
 
+for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+    test(`runtime directory activation retries a transient Windows ${code} without changing its targets`, () => {
+        const { renameRuntimeDirectory } = require("../app/runtime-cleanup");
+        let attempts = 0;
+        const pauses = [];
+        renameRuntimeDirectory("validated-stage", "managed-runtime", {
+            platform: "win32", pause: (milliseconds) => pauses.push(milliseconds),
+            rename(source, destination) {
+                assert.equal(source, "validated-stage");
+                assert.equal(destination, "managed-runtime");
+                if (++attempts < 3) throw Object.assign(new Error("temporarily locked"), { code });
+            },
+        });
+        assert.equal(attempts, 3);
+        assert.deepEqual(pauses, [250, 250]);
+    });
+}
+
+test("persistent Windows locks fail after a bounded retry period with the original error", () => {
+    const { renameRuntimeDirectory } = require("../app/runtime-cleanup");
+    const error = Object.assign(new Error("still locked"), { code: "EPERM" });
+    let waited = 0;
+    let attempts = 0;
+    assert.throws(() => renameRuntimeDirectory("stage", "runtime", {
+        platform: "win32", pause: (milliseconds) => { waited += milliseconds; },
+        rename() { attempts += 1; throw error; },
+    }), (failure) => failure === error);
+    assert.equal(attempts, 21);
+    assert.equal(waited, 5000);
+});
+
+for (const [platform, code] of [["linux", "EPERM"], ["darwin", "EACCES"], ["freebsd", "EBUSY"], ["win32", "ENOENT"]]) {
+    test(`${platform} ${code} is not hidden by Windows lock retries`, () => {
+        const { renameRuntimeDirectory } = require("../app/runtime-cleanup");
+        let attempts = 0;
+        assert.throws(() => renameRuntimeDirectory("stage", "runtime", {
+            platform, pause: () => assert.fail("must not wait"),
+            rename() { attempts += 1; throw Object.assign(new Error("rename failed"), { code }); },
+        }), { code });
+        assert.equal(attempts, 1);
+    });
+}
+
 test("missing shared libraries request only OS dependencies and preserve the current runtime", () => {
     const serverRoot = fs.mkdtempSync(path.join(os.tmpdir(), "radio-shared-libs-"));
     try {

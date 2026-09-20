@@ -10,7 +10,7 @@ const releases = require("./liquidsoap-releases");
 const opam = require("./liquidsoap-opam");
 const systemDependencies = require("./system-dependencies");
 const { readRuntimeManifest } = require("./runtime-manifest");
-const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
+const { cleanupRuntimeDirectory, renameRuntimeDirectory } = require("./runtime-cleanup");
 
 const LIQUIDSOAP_PACKAGES = [
     {
@@ -101,13 +101,13 @@ function readOsRelease() {
 function activateRuntime(stagingRoot, runtimeRoot) {
     const backup = `${runtimeRoot}.previous-${randomUUID()}`;
     const existed = fs.existsSync(runtimeRoot);
-    if (existed) fs.renameSync(runtimeRoot, backup);
+    if (existed) renameRuntimeDirectory(runtimeRoot, backup);
     try {
-        fs.renameSync(stagingRoot, runtimeRoot);
+        renameRuntimeDirectory(stagingRoot, runtimeRoot);
     } catch (error) {
         if (existed) {
             try {
-                fs.renameSync(backup, runtimeRoot);
+                renameRuntimeDirectory(backup, runtimeRoot);
             } catch (rollbackError) {
                 throw new Error(
                     `Liquidsoap activation failed: ${error.message}. Restoration also failed: ${rollbackError.message}. ` +
