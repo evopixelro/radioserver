@@ -8,6 +8,7 @@ const codeUpdater = require("./code-updater");
 const logConsole = require("./log-console");
 const logCleanup = require("./log-cleanup");
 const { withControlLock } = require("./control-lock");
+const { formatHelpRows } = require("./console-format");
 
 const RECOVERY_COMMANDS = new Set([
     "help", "--help", "-h", "doctor", "status", "autodj-status",
@@ -50,50 +51,66 @@ function isAutomaticNpmInstall(environment = process.env) {
 
 function usage(component = "server") {
     if (component === "autodj") {
-        console.log(`Usage: node autodj.js [command] [options]
-
-With no command, run AutoDJ in the foreground for Screen or another supervisor.
+        console.log(`Usage: npm run autodj:<action> [-- arguments]
 
 AutoDJ (Liquidsoap):
-  start [args]                Generate, validate and start AutoDJ in the background
-  stop                        Stop AutoDJ
-  restart [args]              Regenerate, validate and restart AutoDJ
-  status                      Show AutoDJ status
-  console                     Follow AutoDJ logs without controlling the process
-  clear_logs                  Empty the active AutoDJ log while stopped
+${formatHelpRows([
+    ["npm run autodj:start [-- args]", "Start AutoDJ in the background after validation"],
+    ["npm run autodj:stop", "Stop AutoDJ"],
+    ["npm run autodj:restart [-- args]", "Validate and restart AutoDJ in the background"],
+    ["npm run autodj:status", "Show AutoDJ status"],
+    ["npm run autodj:console", "Follow AutoDJ logs without controlling the process"],
+    ["npm run autodj:logs:clear", "Clear active AutoDJ logs while stopped; keep archives"],
+    ["npm run autodj:help", "Show this help"],
+])}
 
-Run 'node server.js --help' for installation and shared commands.`);
+Foreground (Screen or another supervisor):
+${formatHelpRows([["node autodj.js run [args]", "Run AutoDJ in the foreground"]])}
+
+With no command, 'node autodj.js' runs AutoDJ in the foreground.
+Run 'npm run help' for installation and shared commands.`);
         return;
     }
-    console.log(`Usage: node server.js [command] [options]
-
-With no command, run SHOUTcast in the foreground for Screen or another supervisor.
+    console.log(`Usage: npm run <script> [-- arguments]
 
 RadioServer:
-  start [sc_serv args]        Start RadioServer
-  stop                        Stop RadioServer
-  restart [sc_serv args]      Restart RadioServer
-  status                      Show RadioServer and AutoDJ status
-  console                     Follow RadioServer logs without controlling the process
-  clear_logs                  Empty active RadioServer logs while stopped
-  setup                       Run sc_serv setup
-  doctor                      Check Node.js, binaries and runtime requirements
-  install --accept-license    Install or reinstall managed radio runtimes
-  update --accept-license     Update only changed or missing managed runtimes
-  update_code [options]       Update controller code from GitHub
+${formatHelpRows([
+    ["npm run start [-- args]", "Start RadioServer in the background after validation"],
+    ["npm run stop", "Stop RadioServer"],
+    ["npm run restart [-- args]", "Validate and restart RadioServer in the background"],
+    ["npm run status", "Show RadioServer and AutoDJ status"],
+    ["npm run console", "Follow RadioServer logs without controlling the process"],
+    ["npm run logs:clear", "Clear active RadioServer logs while stopped; keep archives"],
+    ["npm run setup", "Run SHOUTcast setup"],
+    ["npm run doctor", "Check configuration, binaries and runtime requirements"],
+    ["npm run install", "Install or reinstall managed radio runtimes"],
+    ["npm run update", "Check for updates; keep validated current runtimes"],
+    ["npm run code:update [-- options]", "Update controller code from GitHub"],
+    ["npm run help", "Show this help"],
+])}
 
 AutoDJ (Liquidsoap):
-  start_autodj [args]         Generate, validate and start AutoDJ
-  stop_autodj                 Stop AutoDJ
-  autodj-restart [args]       Regenerate, validate and restart AutoDJ
-  autodj-status               Show AutoDJ status
-  console_autodj              Follow AutoDJ logs without controlling the process
-  clear_logs_autodj           Empty the active AutoDJ log while stopped
+${formatHelpRows([
+    ["npm run autodj:start [-- args]", "Start AutoDJ in the background after validation"],
+    ["npm run autodj:stop", "Stop AutoDJ"],
+    ["npm run autodj:restart [-- args]", "Validate and restart AutoDJ in the background"],
+    ["npm run autodj:status", "Show AutoDJ status"],
+    ["npm run autodj:console", "Follow AutoDJ logs without controlling the process"],
+    ["npm run autodj:logs:clear", "Clear active AutoDJ logs while stopped; keep archives"],
+    ["npm run autodj:help", "Show AutoDJ help"],
+])}
 
 Playlist:
-  playlist [options]          Generate the AutoDJ playlist
+${formatHelpRows([["npm run playlist [-- options]", "Generate the AutoDJ playlist"]])}
 
-Run 'node server.js playlist --help' for playlist options.`);
+Foreground (Screen or another supervisor):
+${formatHelpRows([
+    ["node server.js run [args]", "Run RadioServer in the foreground"],
+    ["node autodj.js run [args]", "Run AutoDJ in the foreground"],
+])}
+
+With no command, 'node server.js' runs SHOUTcast in the foreground.
+Run 'npm run playlist -- --help' for playlist options.`);
 }
 
 function radioStatus() {
@@ -135,11 +152,11 @@ async function dispatch(argumentsList) {
             radioStatus();
             return;
         case "console":
-            if (commandArguments.length) throw new Error("Usage: node server.js console");
+            if (commandArguments.length) throw new Error("Usage: npm run console");
             await logConsole.followLogs([config.stdoutLogPath, config.stderrLogPath], { label: "RadioServer" });
             return;
         case "clear_logs": {
-            if (commandArguments.length) throw new Error("Usage: node server.js clear_logs");
+            if (commandArguments.length) throw new Error("Usage: npm run logs:clear");
             const paths = logCleanup.assertLogSeparation(config, autodjConfig.logPath);
             const count = logCleanup.clearLogs(paths, { label: "RadioServer", running: radio.getStatus(config).running });
             console.log(`RadioServer logs cleared (${count} files). Archives were kept.`);
@@ -198,11 +215,11 @@ async function dispatch(argumentsList) {
         }
         case "autodj-console":
         case "console_autodj":
-            if (commandArguments.length) throw new Error("Usage: node autodj.js console");
+            if (commandArguments.length) throw new Error("Usage: npm run autodj:console");
             await logConsole.followLogs([autodjConfig.logPath], { label: "AutoDJ" });
             return;
         case "clear_logs_autodj": {
-            if (commandArguments.length) throw new Error("Usage: node autodj.js clear_logs");
+            if (commandArguments.length) throw new Error("Usage: npm run autodj:logs:clear");
             logCleanup.assertLogSeparation(config, autodjConfig.logPath);
             const count = logCleanup.clearLogs([autodjConfig.logPath], { label: "AutoDJ", running: autodj.status(autodjConfig).running });
             console.log(`AutoDJ logs cleared (${count} files). Archives were kept.`);

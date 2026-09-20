@@ -1,18 +1,21 @@
 const path = require("node:path");
 const { generatePlaylist } = require("./playlist-generator");
+const { formatHelpRows } = require("./console-format");
 
 function usage() {
-    console.log(`Usage: playlist [options]
+    console.log(`Usage: npm run playlist [-- options]
 
 Options:
-  --config <file>       JSON configuration file
-  --playlist-dir <dir>  Override the directory when one playlist is enabled
-  --output <file>       Override the output when one playlist is enabled
-  --absolute            Write absolute audio paths
-  --shuffle             Randomise playlist order
-  --no-recursive        Only scan the top-level audio directory
-  --dry-run             Print entries without writing a file
-  --help                Show this help`);
+${formatHelpRows([
+    ["--config <file>", "Use a JSON configuration file"],
+    ["--playlist-dir <dir>", "Override the directory when one playlist is enabled"],
+    ["--output <file>", "Override the output when one playlist is enabled"],
+    ["--absolute", "Write absolute audio paths"],
+    ["--shuffle", "Randomise playlist order"],
+    ["--no-recursive", "Scan only the top-level audio directory"],
+    ["--dry-run", "Print entries without writing a file"],
+    ["--help", "Show this help"],
+])}`);
 }
 
 function parseArguments(argumentsList) {

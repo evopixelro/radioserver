@@ -56,7 +56,7 @@ function getArguments(binary, args = []) {
 
 function checkRuntime(binary, run = spawnSync) {
     try {
-        const result = run(binary, getArguments(binary, ["--check", "()"]), {
+        const result = run(binary, getArguments(binary, ["--no-cache", "--check", "()"]), {
             encoding: "utf8", timeout: 45000, windowsHide: true,
             stdio: ["ignore", "pipe", "pipe"],
         });

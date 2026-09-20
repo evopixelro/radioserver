@@ -145,6 +145,41 @@ test("FFmpeg update reuses the validated current prefix without build tools or d
 });
 
 for (const family of ["linux", "macos", "freebsd"]) {
+    test(`${family} FFmpeg cleanup retains the active build and removes only owned unused builds`, async (context) => {
+        const target = { ...profile, family, id: `${family}-x64` };
+        const { root, options } = fixture(context, undefined, target);
+        context.mock.method(console, "warn", () => {});
+        const old = await ffmpeg.install(root, target, { strategy: "source", version: "8.1.2" }, options);
+        // Older installations have only the active manifest; the next install records their ownership.
+        fs.unlinkSync(path.join(old.prefix, "runtime.json"));
+        const current = await ffmpeg.install(root, target, { strategy: "source", version: "8.1.2" }, options);
+        const unknown = path.join(path.dirname(current.prefix), "8.1.1-ABC123");
+        fs.mkdirSync(unknown);
+        fs.writeFileSync(path.join(unknown, "keep.txt"), "not a registered build");
+        ffmpeg.cleanupUnused(root, target, old.prefix);
+        assert.ok(fs.existsSync(old.binary), "retain old libraries while Liquidsoap still references them");
+        ffmpeg.cleanupUnused(root, target, current.prefix);
+        assert.equal(fs.existsSync(old.prefix), false);
+        assert.ok(fs.existsSync(current.binary));
+        assert.equal(fs.readFileSync(path.join(unknown, "keep.txt"), "utf8"), "not a registered build");
+        ffmpeg.cleanupUnused(root, target, current.prefix);
+        assert.ok(fs.existsSync(current.binary));
+    });
+}
+
+test("FFmpeg cleanup preserves redirected builds", async (context) => {
+    const { root, options } = fixture(context);
+    const old = await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
+    const current = await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
+    const outside = path.join(root, "outside");
+    fs.renameSync(old.prefix, outside);
+    fs.symlinkSync(outside, old.prefix, process.platform === "win32" ? "junction" : "dir");
+    ffmpeg.cleanupUnused(root, profile, current.prefix);
+    assert.ok(fs.existsSync(path.join(outside, "bin", "ffmpeg")));
+    assert.ok(fs.existsSync(current.binary));
+});
+
+for (const family of ["linux", "macos", "freebsd"]) {
     test(`${family} reinstalls FFmpeg at the same version only when forced by install`, async (context) => {
         const target = { ...profile, family, id: `${family}-x64` };
         const { root, options } = fixture(context, undefined, target);

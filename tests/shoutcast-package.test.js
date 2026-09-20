@@ -238,8 +238,9 @@ test("a cancelled Windows installer keeps its download", async (context) => {
 test("download cleanup failure warns without invalidating a successful installation", async (context) => {
     const f = installationFixture(context);
     const remove = fs.rmSync;
+    const packagePath = path.join(fs.realpathSync(path.dirname(f.packageInfo.filePath)), path.basename(f.packageInfo.filePath));
     context.mock.method(fs, "rmSync", (file, options) => {
-        if (file === f.packageInfo.filePath) {
+        if (file === packagePath) {
             assert.notEqual(options.recursive, true);
             throw Object.assign(new Error("download still locked"), { code: "EBUSY" });
         }

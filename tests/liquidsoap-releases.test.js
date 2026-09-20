@@ -52,6 +52,14 @@ test("release lookup reports network failure instead of claiming an old version 
     await assert.rejects(latestPackage(target, process.cwd(), [], async () => ({ ok: false, status: 403 })), /HTTP 403/);
 });
 
+test("rate-limited release checks report the limit without falling back to an old version", async () => {
+    for (const status of [403, 429]) {
+        await assert.rejects(latestPackage(target, process.cwd(), [], async () => ({
+            ok: false, status, headers: new Map([["x-ratelimit-remaining", "0"]]),
+        })), /rate limit reached.*No older release was selected/);
+    }
+});
+
 test("latest release selection compares all pages instead of trusting publication order", async () => {
     let page = 0;
     const result = await latestPackage(target, process.cwd(), [], async () => ({

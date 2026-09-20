@@ -35,6 +35,9 @@ async function main() {
     const repeatedFfmpeg = await ffmpeg.install(serverRoot, profile, secondFfmpegPlan);
     assert.equal(repeatedFfmpeg?.prefix, localFfmpeg?.prefix);
     assert.equal(await dependencies.installDependencies({ serverRoot, plan: secondPlan, ffmpeg: repeatedFfmpeg }), binary);
+    assert.equal(fs.existsSync(path.join(serverRoot, "bin", "downloads", "liquidsoap")), false, "successful installs remove their archive cache");
+    runtime.checkVersion(binary, plan.version);
+    assert.equal(runtime.checkRuntime(binary).ok, true, "cleanup must leave the installed runtime usable");
     console.log(`Verified first installation and no-op update: Liquidsoap ${plan.version} (${plan.strategy})`);
     if (process.env.GITHUB_ENV) {
         fs.appendFileSync(process.env.GITHUB_ENV, `LIQUIDSOAP_TEST_BIN=${binary}\n`);

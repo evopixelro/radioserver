@@ -4,7 +4,7 @@ const { randomUUID } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const runtime = require("./liquidsoap-runtime");
 const { readRuntimeManifest } = require("./runtime-manifest");
-const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
+const { cleanupRuntimeDirectory, managedDirectory, readCleanupManifest } = require("./runtime-cleanup");
 const ffmpegRuntime = require("./ffmpeg-runtime");
 
 function inspectPrerequisites(profile, { run = spawnSync, userId = process.getuid?.(), managedFfmpeg = false, environment = process.env } = {}) {
@@ -84,7 +84,7 @@ function cleanupLegacyRoot(serverRoot, root, run, environment) {
     try {
         const expected = path.resolve(serverRoot, "bin", "liquidsoap", "opam");
         if (path.resolve(root) !== expected || !fs.existsSync(expected)) return;
-        if (fs.realpathSync(expected) !== expected) throw new Error("legacy OPAM root is redirected");
+        managedDirectory(serverRoot, "bin", "liquidsoap", "opam");
         const result = run("opam", ["switch", "list", "--short", `--root=${expected}`], {
             cwd: serverRoot, env: { ...environment, OPAMROOT: expected }, encoding: "utf8",
             stdio: ["ignore", "pipe", "pipe"], timeout: 30000,
@@ -180,4 +180,47 @@ function install(serverRoot, profile, version, {
     }
 }
 
-module.exports = { inspectPrerequisites, install, prerequisites };
+function cleanup(serverRoot, profile, binary, { run = spawnSync } = {}) {
+    if (!/^(linux|macos|freebsd)-(x64|x86|arm64|arm)$/.test(profile.id || "")) return false;
+    try {
+        const parent = managedDirectory(serverRoot, "bin", "liquidsoap", profile.id);
+        const directory = managedDirectory(serverRoot, "bin", "liquidsoap", profile.id, "runtime");
+        if (path.resolve(binary) !== path.join(runtime.getManagedRoot(serverRoot, profile), "liquidsoap")) return false;
+        const current = readCleanupManifest(directory);
+        const expectedRoot = path.join(serverRoot, "bin", "liquidsoap", profile.id, "opam");
+        const owned = new RegExp(`^${profile.id}-\\d+\\.\\d+\\.\\d+-[a-f0-9-]{36}$`);
+        if (current.method !== "opam" || current.root !== expectedRoot || !owned.test(current.switch || "")) return false;
+        const root = managedDirectory(serverRoot, "bin", "liquidsoap", profile.id, "opam");
+        managedDirectory(serverRoot, "bin", "liquidsoap", profile.id, "opam", current.switch);
+        // Recovery directories may still need an old compiler switch or FFmpeg prefix.
+        if (fs.readdirSync(parent).some((name) => /^runtime\.(previous-|tmp-)/.test(name)) ||
+                fs.readdirSync(path.dirname(parent)).some((name) => name.startsWith(`${profile.id}.previous-`) || name.startsWith(`${profile.id}.tmp-`))) return false;
+        const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPAM")));
+        Object.assign(env, { OPAMROOT: current.root, OPAMYES: "1" });
+        const command = (args) => {
+            const result = run("opam", [...args, `--root=${current.root}`, "--cli=2.1"], {
+                cwd: serverRoot, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120000,
+            });
+            if (result.error || result.status !== 0) throw new Error(`opam ${args[0]} failed (${result.error?.message || `exit ${result.status}`})`);
+            return String(result.stdout || "").trim().split(/\r?\n/).filter(Boolean);
+        };
+        const switches = command(["switch", "list", "--short"]);
+        if (!switches.includes(current.switch)) throw new Error("active OPAM switch was not reported");
+        for (const name of switches) {
+            if (name === current.switch || !owned.test(name)) continue;
+            managedDirectory(serverRoot, "bin", "liquidsoap", profile.id, "opam", name);
+            command(["switch", "remove", name, "--yes"]);
+            console.log(`Removed unused Liquidsoap OPAM switch: ${name}`);
+        }
+        command(["clean", `--switch=${current.switch}`, "--download-cache", "--logs", "--switch-cleanup", "--yes"]);
+        // Unknown switches and a legacy root are retained, along with their possible FFmpeg dependencies.
+        return switches.every((name) => name === current.switch || owned.test(name)) &&
+            fs.readdirSync(root).filter((name) => owned.test(name)).every((name) => name === current.switch) &&
+            !fs.existsSync(path.join(serverRoot, "bin", "liquidsoap", "opam"));
+    } catch (error) {
+        if (error.code !== "ENOENT") console.warn(`Liquidsoap cleanup warning: ${error.message}. Uncertain runtime dependencies were kept.`);
+        return false;
+    }
+}
+
+module.exports = { cleanup, inspectPrerequisites, install, prerequisites };

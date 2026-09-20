@@ -13,6 +13,14 @@ const { createMetadataLogParser } = require("../app/metadata-repair");
 
 const binary = process.env.LIQUIDSOAP_TEST_BIN;
 
+test("runtime validation does not create a cache in the working directory", () => {
+    const check = checkRuntime("liquidsoap", (_binary, args) => {
+        assert.deepEqual(args, ["--no-cache", "--check", "()"]);
+        return { status: 0 };
+    });
+    assert.equal(check.ok, true);
+});
+
 test("Liquidsoap accepts the generated output and evaluates nullable Unicode titles", {
     skip: !binary && "Set LIQUIDSOAP_TEST_BIN to run the real Liquidsoap interpreter",
     timeout: 60000,
@@ -192,7 +200,7 @@ test("a relocated executable loads its bundled standard library without a global
         const check = checkRuntime(relocated);
         assert.equal(check.ok, true, check.detail);
         const result = spawnSync(relocated, getArguments(relocated, ["--check", 'assert(string.length("Și — Радио") > 0)']), {
-            encoding: "utf8", timeout: 45000,
+            encoding: "utf8", timeout: 45000, cwd: temporaryRoot,
         });
         assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
         // A damaged local library must not fall back to a system installation

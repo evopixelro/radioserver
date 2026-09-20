@@ -188,3 +188,74 @@ test("checks the installed executable version rather than trusting a manifest", 
         assert.throws(() => runtime.checkVersion("liquidsoap", "2.4.5", run(output)), /latest official release/);
     }
 });
+
+for (const recorded of [false, true]) {
+    test(`Debian archive cleanup preserves diagnostic metadata: recorded=${recorded}`, async (context) => {
+        const { serverRoot, runtimeProfile } = fixture(context);
+        context.mock.method(console, "log", () => {});
+        const directory = path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id);
+        fs.mkdirSync(directory, { recursive: true });
+        const binary = path.join(directory, "liquidsoap");
+        fs.writeFileSync(binary, "installed");
+        const name = "liquidsoap_2.4.5-ubuntu-noble-ocaml4.14.2-2_amd64.deb";
+        fs.writeFileSync(path.join(directory, "runtime.json"), JSON.stringify({
+            url: `https://github.com/savonet/liquidsoap-release-assets/releases/download/v2.4.5/${name}`,
+            ...(recorded ? { debianDepends: "libc6" } : {}),
+        }));
+        const cache = path.join(serverRoot, "bin", "downloads", "liquidsoap");
+        fs.mkdirSync(cache, { recursive: true });
+        fs.writeFileSync(path.join(cache, name), "active diagnostic archive");
+        const old = path.join(cache, name.replace("2.4.5-", "2.4.4-"));
+        fs.writeFileSync(old, "old archive");
+        await dependencies.installDependencies({ serverRoot, plan: { runtimeProfile, version: "2.4.5", strategy: "existing", binary } });
+        assert.equal(fs.existsSync(path.join(cache, name)), !recorded);
+        assert.equal(fs.existsSync(old), false);
+    });
+}
+
+for (const force of [false, true]) {
+    for (const outcome of ["success", "failure", "uncertain-switches"]) {
+        test(`${force ? "install" : "update"} cleans Liquidsoap archives and FFmpeg only after success: ${outcome}`, async (context) => {
+            const { serverRoot, runtimeProfile } = fixture(context);
+            context.mock.method(console, "log", () => {});
+            const cache = path.join(serverRoot, "bin", "downloads", "liquidsoap");
+            fs.mkdirSync(cache, { recursive: true });
+            const archive = path.join(cache, "liquidsoap-2.4.4-win64.zip");
+            const deb = path.join(cache, "liquidsoap_2.4.4-ubuntu-noble-ocaml4.14.2-2_amd64.deb");
+            fs.writeFileSync(archive, "old archive");
+            fs.writeFileSync(deb, "old package");
+            fs.writeFileSync(path.join(cache, "notes.txt"), "keep");
+            const binary = path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime", "liquidsoap");
+            const ffmpegPrefix = path.join(serverRoot, "bin", "ffmpeg", runtimeProfile.id, "builds", "8.1.2-ABC123");
+            let installed = false;
+            context.mock.method(opam, "install", () => {
+                assert.ok(fs.existsSync(archive));
+                if (outcome === "failure") throw new Error("BUILD_FAILED");
+                fs.mkdirSync(path.dirname(binary), { recursive: true });
+                fs.writeFileSync(binary, "installed runtime");
+                fs.writeFileSync(path.join(path.dirname(binary), "runtime.json"), JSON.stringify({ ffmpegPrefix }));
+                installed = true;
+                return binary;
+            });
+            const clean = context.mock.method(opam, "cleanup", () => {
+                assert.equal(installed, true);
+                return outcome !== "uncertain-switches";
+            });
+            const cleanFfmpeg = context.mock.method(require("../app/ffmpeg-runtime"), "cleanupUnused", () => assert.equal(installed, true));
+            const action = dependencies.installDependencies({ serverRoot, force, plan: { runtimeProfile, version: "2.4.5", strategy: "source" } });
+            if (outcome === "failure") {
+                await assert.rejects(action, /BUILD_FAILED/);
+                assert.ok(fs.existsSync(archive));
+                assert.ok(fs.existsSync(deb));
+                assert.equal(clean.mock.callCount(), 0);
+            } else {
+                assert.equal(await action, binary);
+                assert.equal(fs.existsSync(archive), false);
+                assert.equal(fs.existsSync(deb), false);
+                assert.equal(fs.readFileSync(path.join(cache, "notes.txt"), "utf8"), "keep");
+            }
+            assert.equal(cleanFfmpeg.mock.callCount(), outcome === "success" ? 1 : 0);
+            if (outcome === "success") assert.deepEqual(cleanFfmpeg.mock.calls[0].arguments, [serverRoot, runtimeProfile, ffmpegPrefix]);
+        });
+    }
+}

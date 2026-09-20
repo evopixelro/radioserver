@@ -10,6 +10,8 @@
   },
   "main": "server.js",
   "scripts": {
+    "help": "node server.js --help",
+    "autodj:help": "node autodj.js --help",
     "install": "node server.js install --accept-license",
     "update": "node server.js update --accept-license",
     "code:update": "node server.js update_code",

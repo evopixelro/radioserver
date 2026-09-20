@@ -33,6 +33,12 @@ Both engines must work on the target host. macOS, Apple Silicon and FreeBSD
 require native validation of supplied binaries. The controller does not install
 emulation or download older Mac/BSD DNAS builds.
 
+[Current SHOUTcast server downloads](https://shoutcast.com/pricing/basic) target
+Linux and Windows. For a complete current stack on a Mac or FreeBSD host without
+a compatible native DNAS binary, run RadioServer and both engines together in a
+Linux virtual machine. A Linux executable cannot be used as a native Mac/BSD
+replacement through `SC_SERV_BIN`.
+
 ## Installation
 
 Read the [SHOUTcast DNAS license](https://www.shoutcast.com/legal/agreements/dnas)
@@ -69,10 +75,13 @@ do not require the source-build tools; the Windows package also includes FFmpeg.
 The checks do not install system packages.
 For a first installation, native libraries are checked again after extraction,
 before activating the new executable.
-After a successful SHOUTcast install or update, its downloaded packages are removed,
-including recognized older archives and installers. Empty download directories are
-removed too; other files and Liquidsoap downloads are left untouched. A failed
-installation keeps the SHOUTcast package for troubleshooting.
+After a successful installation or update, each managed runtime removes its
+recognized downloaded packages, including older archives. Empty download directories
+are removed too; unrelated files are kept. A failed installation keeps its package
+for troubleshooting. Liquidsoap's Debian package dependencies are recorded in the
+runtime manifest so diagnostics do not need the downloaded archive.
+Older binary installations retain their active Debian archive until a reinstall
+records this metadata; obsolete packages are still removed.
 
 On Linux, macOS and FreeBSD, install and update build the newest stable FFmpeg
 release supported by Liquidsoap in `bin/ffmpeg/<os>-<arch>/`. Sources come from
@@ -165,9 +174,14 @@ builds in the platform-specific location before removing the previous switch.
 The old shared `bin/liquidsoap/opam/` is removed only after no switches remain
 and it contains only recognized OPAM metadata; other platforms and unknown files
 are preserved. Do not move existing OPAM folders manually.
-FFmpeg builds use permanent versioned prefixes because Liquidsoap may still link
-to an older one. Do not delete those prefixes while they are in use. Unix source
-builds require a project path without spaces or shell-special characters.
+After successful source installation or validation, unused managed OPAM switches
+and build/download caches are cleaned. FFmpeg builds keep their fixed paths while
+in use; registered older builds are removed only after the active Liquidsoap uses
+the current build and no uncertain switches or recovery directories remain.
+Failed updates retain the libraries needed by the previous Liquidsoap. Unrecognized
+older directories and redirected paths are not deleted automatically; cleanup
+failures report a warning without invalidating the installed runtime.
+Unix source builds require a project path without spaces or shell-special characters.
 
 For a POSIX shell:
 
@@ -211,8 +225,9 @@ Restart prevalidates the executable and configuration before stopping the curren
 engine; AutoDJ also checks its generated Liquidsoap script. Prevalidation
 failures leave the existing engine running.
 
-Run `node server.js --help`, `node autodj.js --help` or
-`node server.js playlist --help` for command details. Platform-specific
+Run `npm run help`, `npm run autodj:help` or
+`npm run playlist -- --help` for command details. Use `--` to pass arguments
+to an npm script, for example `npm run playlist -- --dry-run`. Platform-specific
 `install:*`, `update:*`, `start:*` and `autodj:start:*` scripts select
 `linux`, `windows`, `macos` or `freebsd`, for example `npm run start:windows`.
 SHOUTcast also has `windows:x86` variants. The selection must match the host.

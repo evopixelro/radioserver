@@ -64,7 +64,11 @@ async function latestRelease(fetchImplementation = globalThis.fetch) {
             headers: { Accept: "application/vnd.github+json", "User-Agent": "RadioServer runtime installer" },
             signal: AbortSignal.timeout(30000),
         });
-        if (!response.ok) throw new Error(`Could not check official Liquidsoap releases: HTTP ${response.status}. Try again later.`);
+        if (!response.ok) {
+            const limited = response.status === 429 || response.headers?.get("x-ratelimit-remaining") === "0";
+            const hint = limited ? " GitHub API rate limit reached; retry after the limit resets." : " Try again later.";
+            throw new Error(`Could not check official Liquidsoap releases: HTTP ${response.status}.${hint} No older release was selected.`);
+        }
         const releases = await response.json();
         if (!Array.isArray(releases)) throw new Error("Invalid Liquidsoap release response.");
         catalogue.push(...releases);

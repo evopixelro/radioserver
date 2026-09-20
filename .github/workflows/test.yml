@@ -79,7 +79,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: vmactions/freebsd-vm@4469451fe39bee80be4066836c5170362e9349f3 # v1
+        env:
+          LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
         with:
+          envs: 'LIQUIDSOAP_CI_GITHUB_TOKEN'
           release: '14.4'
           mem: 4096
           cpu: 2
@@ -91,10 +94,13 @@ jobs:
             set -eu
             cp -R . /home/radio-test/radioserver
             chown -R radio-test:radio-test /home/radio-test/radioserver
-            su -l radio-test -c '
+            printf '%s\n' "$LIQUIDSOAP_CI_GITHUB_TOKEN" | su -l radio-test -c '
               set -eu
+              IFS= read -r LIQUIDSOAP_CI_GITHUB_TOKEN
+              export LIQUIDSOAP_CI_GITHUB_TOKEN
               cd /home/radio-test/radioserver
               node .github/scripts/install-liquidsoap.js /home/radio-test/radio-runtime
+              unset LIQUIDSOAP_CI_GITHUB_TOKEN
               export LIQUIDSOAP_TEST_BIN=/home/radio-test/radio-runtime/bin/liquidsoap/freebsd-x64/runtime/liquidsoap
               "$LIQUIDSOAP_TEST_BIN" --version
               node --test --test-reporter=tap
@@ -124,12 +130,17 @@ jobs:
           rsync -a --exclude=.git --exclude=bin --exclude=.run --exclude=logs ./ lima-radio-fedora:radioserver/
       - name: Validate the managed installer and native playback on Fedora
         shell: bash
+        env:
+          LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ssh lima-radio-fedora 'bash -se' <<'FEDORA'
+          {
+          printf '%s\n' "$LIQUIDSOAP_CI_GITHUB_TOKEN"
+          cat <<'FEDORA'
           cd "$HOME/radioserver"
           test "$(. /etc/os-release; echo "$ID:$VERSION_ID")" = fedora:44
           node .github/scripts/install-liquidsoap.js "$HOME/radio-runtime"
+          unset LIQUIDSOAP_CI_GITHUB_TOKEN
           export LIQUIDSOAP_TEST_BIN="$HOME/radio-runtime/bin/liquidsoap/linux-x64/runtime/liquidsoap"
           "$LIQUIDSOAP_TEST_BIN" --version
           node --test --test-reporter=tap
@@ -137,6 +148,7 @@ jobs:
             node --test --test-reporter=tap tests/autodj-playlist.test.js tests/autodj-reconnect.test.js tests/playlist-schedule-runtime.test.js
           done
           FEDORA
+          } | ssh lima-radio-fedora 'IFS= read -r LIQUIDSOAP_CI_GITHUB_TOKEN; export LIQUIDSOAP_CI_GITHUB_TOKEN; exec bash -se'
       - name: Stop the Fedora VM
         if: always()
         shell: bash

@@ -253,31 +253,118 @@ test("unsupported Node.js still permits stopping an existing service", async (co
     assert.equal(stop.mock.callCount(), 1);
 });
 
-test("AutoDJ help identifies its own entrypoint and default foreground mode", () => {
+test("AutoDJ help identifies its npm scripts and default foreground mode", () => {
     for (const args of [["autodj.js", "--help"], ["app/platform-runner.js", "auto", "autodj", "help"]]) {
         const result = spawnSync(process.execPath, args, {
             cwd: path.resolve(__dirname, ".."), encoding: "utf8", timeout: 10000, windowsHide: true,
         });
         assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stdout, /^Usage: node autodj\.js/);
+        assert.match(result.stdout, /^Usage: npm run autodj:<action>/);
         assert.match(result.stdout, /no command.*foreground/i);
-        for (const command of ["start", "stop", "restart", "status", "console", "clear_logs"]) {
-            assert.match(result.stdout, new RegExp(`^  ${command}(?: |$)`, "m"));
+        for (const command of ["start", "stop", "restart", "status", "console", "logs:clear", "help"]) {
+            assert.match(result.stdout, new RegExp(`^  npm run autodj:${command}(?: |$)`, "m"));
         }
     }
 });
 
-test("server help uses aligned descriptions across every section", async (context) => {
-    const lines = [];
-    context.mock.method(console, "log", (text) => lines.push(...text.split("\n")));
-    await cli.main(["help"]);
-    const columns = lines.flatMap((line) => {
-        const match = /^  \S.*? {2,}(\S.*)$/.exec(line);
-        return match ? [line.length - match[1].length] : [];
+for (const [name, args, usage, commands] of [
+    ["server", ["server.js", "--help"], "npm run <script>", [
+        "start", "stop", "restart", "status", "console", "logs:clear", "setup", "doctor", "install", "update", "code:update", "help",
+        "autodj:start", "autodj:stop", "autodj:restart", "autodj:status", "autodj:console", "autodj:logs:clear", "autodj:help", "playlist",
+    ]],
+    ["AutoDJ", ["autodj.js", "--help"], "npm run autodj:<action>", [
+        "autodj:start", "autodj:stop", "autodj:restart", "autodj:status", "autodj:console", "autodj:logs:clear", "autodj:help",
+    ]],
+    ["playlist", ["server.js", "playlist", "--help"], "npm run playlist", [
+        "--config", "--playlist-dir", "--output", "--absolute", "--shuffle", "--no-recursive", "--dry-run", "--help",
+    ]],
+]) {
+    test(`${name} help uses the shared layout and lists existing commands`, () => {
+        const result = spawnSync(process.execPath, args, {
+            cwd: path.resolve(__dirname, ".."), encoding: "utf8", timeout: 10000, windowsHide: true,
+        });
+        assert.equal(result.status, 0, result.error?.message || result.stderr);
+        assert.equal(result.stderr, "");
+        assert.ok(result.stdout.startsWith(`Usage: ${usage} [`));
+        assert.doesNotMatch(result.stdout, /[\t\u001b]| +$/m);
+        const rows = result.stdout.split(/\r?\n/).filter((line) => /^  \S/.test(line));
+        if (name === "playlist") {
+            assert.deepEqual(rows.map((line) => line.trimStart().split(" ")[0]), commands);
+        } else {
+            const scripts = rows.flatMap((line) => /^  npm run (\S+)/.exec(line)?.slice(1) || []);
+            assert.deepEqual(scripts, commands);
+            for (const script of scripts) assert.ok(Object.hasOwn(require("../package.json").scripts, script), script);
+            for (const line of rows.filter((row) => row.startsWith("  npm run ") && row.includes("["))) {
+                assert.match(line, /\[-- (args|options)\]/);
+            }
+        }
+        for (const line of rows) {
+            const match = /^  \S.*? {2,}(\S.*)$/.exec(line);
+            assert.ok(match, line);
+            assert.equal(line.length - match[1].length, 36, line);
+        }
     });
-    assert.ok(columns.length >= 10);
-    assert.equal(new Set(columns).size, 1);
+}
+
+test("npm help scripts only show help and do not start an engine", () => {
+    const scripts = require("../package.json").scripts;
+    for (const [name, command] of [["help", "node server.js --help"], ["autodj:help", "node autodj.js --help"]]) {
+        assert.equal(scripts[name], command);
+        const result = spawnSync(process.execPath, command.split(" ").slice(1), {
+            cwd: path.resolve(__dirname, ".."), encoding: "utf8", timeout: 10000, windowsHide: true,
+        });
+        assert.equal(result.status, 0, result.error?.message || result.stderr);
+        assert.match(result.stdout, /^Usage: npm run /);
+    }
 });
+
+test("usage errors recommend the corresponding npm scripts", async () => {
+    for (const [command, script] of [
+        ["console", "console"], ["clear_logs", "logs:clear"],
+        ["console_autodj", "autodj:console"], ["clear_logs_autodj", "autodj:logs:clear"],
+    ]) {
+        await assert.rejects(cli.main([command, "unexpected"]), { message: `Usage: npm run ${script}` });
+    }
+});
+
+test("help formatter accommodates long labels and empty sections", () => {
+    const { formatHelpRows } = require("../app/console-format");
+    const label = "a-command-longer-than-the-usual-column";
+    assert.equal(formatHelpRows([[label, "Long description"], ["short", "Short description"]]),
+        `  ${label}  Long description\n  ${"short".padEnd(label.length)}  Short description`);
+    assert.equal(formatHelpRows([]), "");
+});
+
+for (const [name, moduleName, component] of [
+    ["RadioServer", "process-manager", "shoutcast"],
+    ["AutoDJ", "autodj-manager", "autodj"],
+]) {
+    test(`${name} keeps its original lifecycle messages`, async (context) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-cli-messages-"));
+        context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+        const manager = require(`../app/${moduleName}`);
+        const state = require("../app/process-state");
+        const config = { runDirectory: root, logDirectory: root };
+        const pid = process.pid + 1;
+        context.mock.method(state, "status", () => ({ running: true, pid }));
+        const stop = context.mock.method(state, "stop", async () => true);
+        const output = context.mock.method(console, "log", () => {});
+
+        assert.equal(await manager.start(config), pid);
+        await manager.runForeground(config);
+        await manager.stop(config);
+        stop.mock.mockImplementation(async () => false);
+        await manager.stop(config);
+
+        assert.deepEqual(output.mock.calls.map((call) => call.arguments), [
+            [`${name} is already online.`],
+            [`${name} is already online.`],
+            [`${name} has been stopped.`],
+            [`${name} is not online.`],
+        ]);
+        assert.deepEqual(stop.mock.calls.map((call) => call.arguments), [[config, component], [config, component]]);
+    });
+}
 
 for (const [component, expected] of [["server", "run"], ["autodj", "run_autodj"]]) {
     test(`${component} entrypoint uses the same foreground default when imported`, async (context) => {

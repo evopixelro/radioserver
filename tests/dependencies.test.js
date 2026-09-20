@@ -65,6 +65,7 @@ test("extracts the complete Linux runtime without installing a system package", 
             {
                 run(command, args) {
                     commands.push([command, ...args.slice(0, 1)]);
+                    if (args[0] === "--field") return { status: 0, stdout: "libc6 (>= 2.34), libffi8" };
                     const staging = args[2];
                     fs.mkdirSync(path.join(staging, "usr", "bin"), { recursive: true });
                     fs.mkdirSync(path.join(staging, "usr", "share", "liquidsoap", "libs"), { recursive: true });
@@ -86,7 +87,8 @@ test("extracts the complete Linux runtime without installing a system package", 
             path.join(serverRoot, "bin", "liquidsoap", "linux-x64", "usr", "bin", "liquidsoap"),
         );
         assert.equal(fs.readFileSync(executablePath, "utf8"), "liquidsoap executable");
-        assert.deepEqual(commands, [["dpkg-deb", "--extract"]]);
+        assert.deepEqual(commands, [["dpkg-deb", "--extract"], ["dpkg-deb", "--field"]]);
+        assert.equal(JSON.parse(fs.readFileSync(path.join(serverRoot, "bin", "liquidsoap", "linux-x64", "runtime.json"))).debianDepends, "libc6 (>= 2.34), libffi8");
         assert.equal(fs.readFileSync(getArguments(executablePath)[1], "utf8"), "library");
     } finally {
         fs.rmSync(serverRoot, { recursive: true, force: true });
@@ -335,6 +337,7 @@ for (const valid of [false, true]) {
             {
                 run(_command, args) {
                     if (!valid) return { status: 1, error: new Error("TEST_EXTRACTION_DENIED") };
+                    if (args[0] === "--field") return { status: 0, stdout: "libc6 (>= 2.34)" };
                     const stagedBinary = path.join(args[2], "usr", "bin", "liquidsoap");
                     const stdlib = path.join(args[2], "usr", "share", "liquidsoap", "libs", "stdlib.liq");
                     fs.mkdirSync(path.dirname(stagedBinary), { recursive: true });

@@ -3,7 +3,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const download = require("./download");
 const { readRuntimeManifest } = require("./runtime-manifest");
-const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
+const { cleanupRuntimeDirectory, managedDirectory, readCleanupManifest } = require("./runtime-cleanup");
 
 const RELEASE_KEY = "FCF986EA15E6E293A5644F10B4322F04D67658D8";
 const POSIX_FAMILIES = ["linux", "macos", "freebsd"];
@@ -127,6 +127,7 @@ async function install(serverRoot, profile, plan, {
 } = {}) {
     if (plan.strategy === "bundled") return null;
     const root = runtimeRoot(serverRoot, profile);
+    const previous = resolve(serverRoot, profile);
     if (!stableVersion(plan.version)) throw new Error("Invalid managed FFmpeg version.");
     if (plan.strategy === "existing" && plan.current && check(plan.current, profile, run)) {
         console.log(`FFmpeg is already up to date: ${plan.current.binary}`);
@@ -201,7 +202,10 @@ async function install(serverRoot, profile, plan, {
             if (fs.existsSync(path.join(source, file))) fs.copyFileSync(path.join(source, file), path.join(prefix, file));
         }
         const manifest = path.join(staging, "runtime.json");
-        fs.writeFileSync(manifest, `${JSON.stringify({ ...runtime, url, signingKey: RELEASE_KEY }, null, 2)}\n`, { mode: 0o640 });
+        const record = { ...runtime, url, signingKey: RELEASE_KEY, managedBy: "radioserver" };
+        fs.writeFileSync(manifest, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o640 });
+        fs.writeFileSync(path.join(prefix, "runtime.json"), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o640, flag: "wx" });
+        if (previous && previous.prefix !== prefix) recordPreviousBuild(serverRoot, profile, previous);
         fs.renameSync(manifest, path.join(root, "runtime.json"));
         activated = true;
         console.log(`Local FFmpeg ${runtime.version} installed: ${runtime.binary}`);
@@ -213,4 +217,44 @@ async function install(serverRoot, profile, plan, {
     }
 }
 
-module.exports = { environment, inspectPrerequisites, install, latestVersion, prepare, resolve, validate };
+function recordPreviousBuild(serverRoot, profile, previous) {
+    try {
+        if (!/^[a-f0-9]{64}$/.test(previous.sha256 || "")) return;
+        const name = path.basename(previous.prefix);
+        if (!/^[78]\.\d+(?:\.\d+)?-[A-Za-z0-9]{6}$/.test(name)) return;
+        const directory = managedDirectory(serverRoot, "bin", "ffmpeg", profile.id, "builds", name);
+        if (fs.realpathSync(previous.prefix) !== directory) return;
+        fs.writeFileSync(path.join(directory, "runtime.json"), `${JSON.stringify({ ...previous, managedBy: "radioserver" }, null, 2)}\n`, { mode: 0o640, flag: "wx" });
+    } catch (error) {
+        if (error.code !== "EEXIST") console.warn(`FFmpeg cleanup warning: could not record the previous build (${error.message}). It will be kept.`);
+    }
+}
+
+function cleanupUnused(serverRoot, profile, liquidsoapPrefix) {
+    if (!POSIX_FAMILIES.includes(profile.family)) return;
+    try {
+        const root = managedDirectory(serverRoot, "bin", "ffmpeg", profile.id);
+        const builds = managedDirectory(serverRoot, "bin", "ffmpeg", profile.id, "builds");
+        const current = readCleanupManifest(root);
+        const prefix = fs.realpathSync(current.prefix);
+        if (path.dirname(prefix) !== builds || fs.realpathSync(liquidsoapPrefix) !== prefix) {
+            throw new Error("the active FFmpeg and Liquidsoap prefixes do not match");
+        }
+        for (const entry of fs.readdirSync(builds, { withFileTypes: true })) {
+            if (!entry.isDirectory() || !/^[78]\.\d+(?:\.\d+)?-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
+            const directory = managedDirectory(serverRoot, "bin", "ffmpeg", profile.id, "builds", entry.name);
+            if (directory === prefix) continue;
+            let record;
+            try { record = readCleanupManifest(directory); }
+            catch { console.warn(`FFmpeg cleanup warning: unrecognized build was kept: ${directory}`); continue; }
+            if (record.managedBy !== "radioserver" || !stableVersion(record.version) ||
+                    !entry.name.startsWith(`${record.version}-`) || !/^[a-f0-9]{64}$/.test(record.sha256 || "") ||
+                    typeof record.prefix !== "string" || fs.realpathSync(record.prefix) !== directory) continue;
+            if (cleanupRuntimeDirectory(directory)) console.log(`Removed unused FFmpeg build: ${directory}`);
+        }
+    } catch (error) {
+        if (error.code !== "ENOENT") console.warn(`FFmpeg cleanup warning: ${error.message}. Existing builds were kept.`);
+    }
+}
+
+module.exports = { cleanupUnused, environment, inspectPrerequisites, install, latestVersion, prepare, resolve, validate };

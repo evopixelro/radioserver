@@ -11,7 +11,7 @@ const opam = require("./liquidsoap-opam");
 const ffmpegRuntime = require("./ffmpeg-runtime");
 const systemDependencies = require("./system-dependencies");
 const { readRuntimeManifest } = require("./runtime-manifest");
-const { cleanupRuntimeDirectory, renameRuntimeDirectory } = require("./runtime-cleanup");
+const { cleanupDownloadCache, cleanupRuntimeDirectory, renameRuntimeDirectory } = require("./runtime-cleanup");
 
 const LIQUIDSOAP_PACKAGES = [
     {
@@ -143,15 +143,17 @@ function extractLinuxPackage(packageInfo, serverRoot, runtimeProfile, {
             throw new Error("Liquidsoap package is incomplete: executable or stdlib.liq is missing.");
         }
         fs.chmodSync(binary, 0o755);
+        const metadata = run("dpkg-deb", ["--field", packageInfo.filePath, "Depends"], { encoding: "utf8", timeout: 10000, windowsHide: true });
         fs.writeFileSync(path.join(stagingRoot, "runtime.json"), `${JSON.stringify({
             version: packageInfo.version,
             sha256: packageInfo.sha256,
             url: packageInfo.url,
+            ...(!metadata.error && metadata.status === 0 ? { debianDepends: String(metadata.stdout || "").trim() } : {}),
         }, null, 2)}\n`, { mode: 0o640 });
         const check = validate(binary);
         if (!check.ok) {
             if (/shared librar|shared object|version .+not found|ENOENT/i.test(check.detail)) {
-                const dependencies = run("dpkg-deb", ["--field", packageInfo.filePath, "Depends"], { encoding: "utf8" });
+                const dependencies = metadata;
                 const expression = !dependencies.error && dependencies.status === 0 ? (dependencies.stdout || "").trim() : "";
                 const profile = { family: "linux", architecture: "x64", ...runtimeProfile };
                 const report = systemDependencies.inspect(binary, profile, { run, detail: check.detail });
@@ -412,6 +414,7 @@ async function prepareInstall({
 function cachedDebianDepends(serverRoot, profile) {
     try {
         const manifest = readRuntimeManifest(path.join(liquidsoapRuntime.getManagedRoot(serverRoot, profile), "runtime.json"));
+        if (typeof manifest.debianDepends === "string" && manifest.debianDepends.length <= 65536) return manifest.debianDepends;
         const fileName = path.basename(new URL(manifest.url).pathname);
         if (!fileName.endsWith(".deb")) return "";
         const filePath = path.join(serverRoot, "bin", "downloads", "liquidsoap", fileName);
@@ -421,7 +424,7 @@ function cachedDebianDepends(serverRoot, profile) {
     } catch { return ""; }
 }
 
-async function installDependencies({ force = false, serverRoot = path.resolve(__dirname, ".."), plan, ffmpeg } = {}) {
+async function installSelectedDependencies({ force = false, serverRoot = path.resolve(__dirname, ".."), plan, ffmpeg } = {}) {
     const selected = plan || await prepareInstall({ force, serverRoot });
     const { runtimeProfile, version, packageInfo } = selected;
     console.log(`Latest stable official Liquidsoap: ${version}.`);
@@ -447,6 +450,29 @@ async function installDependencies({ force = false, serverRoot = path.resolve(__
     }
     await download.downloadVerified({ ...packageInfo, force, label: packageInfo.fileName });
     return extractLinuxPackage(packageInfo, serverRoot, runtimeProfile);
+}
+
+async function installDependencies({ force = false, serverRoot = path.resolve(__dirname, ".."), plan, ffmpeg } = {}) {
+    const selected = plan || await prepareInstall({ force, serverRoot });
+    const binary = await installSelectedDependencies({ force, serverRoot, plan: selected, ffmpeg });
+    if (selected.strategy === "external") return binary;
+    const managedPackage = /^(?:liquidsoap-\d+\.\d+\.\d+-win64\.zip|liquidsoap_\d+\.\d+\.\d+-[a-zA-Z0-9_.-]+_(?:amd64|arm64|i386)\.deb)(?:\.part-[a-f0-9-]{36})?$/;
+    let installed;
+    try { installed = readRuntimeManifest(path.join(liquidsoapRuntime.getManagedRoot(serverRoot, selected.runtimeProfile), "runtime.json")); }
+    catch (error) {
+        console.warn(`Liquidsoap cleanup warning: ${error.message}. Cached packages and existing builds were kept.`);
+        return binary;
+    }
+    const keep = [];
+    // Old binary installs still use their Debian archive for dependency diagnostics.
+    if (typeof installed.debianDepends !== "string" && typeof installed.url === "string" && installed.url.endsWith(".deb")) {
+        try { keep.push(path.basename(new URL(installed.url).pathname)); } catch {}
+    }
+    cleanupDownloadCache(serverRoot, "Liquidsoap", managedPackage, { keep });
+    if (opam.cleanup(serverRoot, selected.runtimeProfile, binary)) {
+        if (typeof installed.ffmpegPrefix === "string") ffmpegRuntime.cleanupUnused(serverRoot, selected.runtimeProfile, installed.ffmpegPrefix);
+    }
+    return binary;
 }
 
 module.exports = {

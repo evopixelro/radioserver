@@ -144,6 +144,57 @@ test("source builds refuse root and unsupported Windows targets", () => {
     assert.throws(() => opam.prerequisites({ family: "windows", id: "windows-arm64" }), /No supported source build/);
 });
 
+for (const scenario of ["success", "remove-failure", "unknown-switch", "recovery", "redirected-root", "legacy-root"]) {
+    test(`OPAM cleanup preserves active and uncertain dependencies: ${scenario}`, (context) => {
+        const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "radio-opam-clean-")));
+        context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+        context.mock.method(console, "log", () => {});
+        context.mock.method(console, "warn", () => {});
+        const profile = { family: "linux", id: "linux-x64" };
+        const parent = path.join(root, "bin", "liquidsoap", profile.id);
+        const opamRoot = path.join(parent, "opam");
+        const current = "linux-x64-2.4.5-00000000-0000-0000-0000-000000000001";
+        const old = "linux-x64-2.4.4-00000000-0000-0000-0000-000000000000";
+        fs.mkdirSync(path.join(opamRoot, current), { recursive: true });
+        fs.mkdirSync(path.join(opamRoot, old));
+        fs.mkdirSync(path.join(parent, "runtime"));
+        const binary = path.join(parent, "runtime", "liquidsoap");
+        fs.writeFileSync(binary, "active launcher");
+        fs.writeFileSync(path.join(parent, "runtime", "runtime.json"), JSON.stringify({ method: "opam", root: opamRoot, switch: current }));
+        if (scenario === "recovery") fs.mkdirSync(path.join(parent, "runtime.previous-test"));
+        if (scenario === "legacy-root") fs.mkdirSync(path.join(root, "bin", "liquidsoap", "opam"));
+        if (scenario === "redirected-root") {
+            const outside = path.join(root, "outside");
+            fs.renameSync(opamRoot, outside);
+            fs.symlinkSync(outside, opamRoot, process.platform === "win32" ? "junction" : "dir");
+        }
+        const calls = [];
+        const ready = opam.cleanup(root, profile, binary, { run(command, args, options) {
+            calls.push(args);
+            assert.equal(command, "opam");
+            assert.equal(options.env.OPAMROOT, opamRoot);
+            assert.ok(args.includes("--cli=2.1"));
+            if (args[0] === "switch" && args[1] === "list") return { status: 0, stdout: [current, old, ...(scenario === "unknown-switch" ? ["custom"] : [])].join("\n") };
+            if (args[0] === "switch" && args[1] === "remove") {
+                assert.equal(args[2], old);
+                if (scenario === "remove-failure") return { status: 1 };
+                fs.rmdirSync(path.join(opamRoot, old));
+            }
+            if (args[0] === "clean") {
+                assert.ok(args.includes(`--switch=${current}`));
+                assert.ok(args.includes("--download-cache"));
+                assert.ok(args.includes("--switch-cleanup"));
+                assert.equal(args.includes("--all-switches"), false);
+            }
+            return { status: 0 };
+        } });
+        assert.equal(ready, scenario === "success");
+        assert.ok(fs.existsSync(path.join(opamRoot, current)));
+        assert.equal(fs.existsSync(path.join(opamRoot, old)), ["remove-failure", "recovery", "redirected-root"].includes(scenario));
+        if (["recovery", "redirected-root"].includes(scenario)) assert.deepEqual(calls, []);
+    });
+}
+
 test("missing build tools are reported without installing OS packages", () => {
     assert.throws(() => opam.prerequisites({ family: "freebsd" }, { userId: 1000,
         run: (command) => ({ status: command === "gmake" ? 1 : 0 }),
