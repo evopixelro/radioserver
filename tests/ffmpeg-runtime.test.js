@@ -96,6 +96,7 @@ test("managed FFmpeg verifies signatures before extraction and activates only a 
     assert.ok(commands[verified].args.includes("--no-autostart"));
     assert.ok(commands[verified].args.includes("--no-default-keyring"));
     const configuration = commands.find(({ command }) => path.basename(command) === "configure");
+    assert.ok(configuration.args.includes("--cc=cc"));
     assert.ok(configuration.args.includes("--enable-libmp3lame"));
     assert.ok(configuration.args.includes("--enable-openssl"));
     assert.ok(configuration.args.includes("--enable-shared"));

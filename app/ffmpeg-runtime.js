@@ -134,7 +134,13 @@ async function install(serverRoot, profile, plan, {
     let activated = false;
     const command = (executable, args, options = {}) => {
         const result = run(executable, args, { cwd: staging, stdio: "inherit", timeout: 3600000, ...options });
-        if (result.error || result.status !== 0) throw new Error(`Local FFmpeg build failed during ${path.basename(executable)}: ${result.error?.message || String(result.stderr || `exit ${result.status}`).trim().slice(-2000)}. The previous runtime was not replaced.`);
+        if (result.error || result.status !== 0) {
+            let diagnostics = "";
+            if (path.basename(executable) === "configure") {
+                try { diagnostics = `\nFFmpeg configuration diagnostics:\n${fs.readFileSync(path.join(options.cwd, "ffbuild", "config.log"), "utf8").slice(-6000)}`; } catch {}
+            }
+            throw new Error(`Local FFmpeg build failed during ${path.basename(executable)}: ${result.error?.message || String(result.stderr || `exit ${result.status}`).trim().slice(-2000)}. The previous runtime was not replaced.${diagnostics}`);
+        }
         return result;
     };
     try {
@@ -170,7 +176,7 @@ async function install(serverRoot, profile, plan, {
             const result = run("pkg-config", [kind, "lame"], { ...capture, env });
             return !result.error && result.status === 0 ? String(result.stdout || "").trim() : "";
         };
-        command(path.join(source, "configure"), [`--prefix=${prefix}`, "--libdir=" + path.join(prefix, "lib"),
+        command(path.join(source, "configure"), ["--cc=cc", `--prefix=${prefix}`, "--libdir=" + path.join(prefix, "lib"),
             "--enable-shared", "--enable-version3", "--disable-static", "--disable-doc", "--disable-debug", "--disable-ffplay",
             "--disable-autodetect", "--enable-pthreads", "--enable-openssl", "--enable-libmp3lame", "--enable-zlib",
             "--enable-rpath", `--extra-cflags=${flags("--cflags-only-I")}`,

@@ -96,6 +96,15 @@ test("managed FFmpeg planning does not require Ubuntu's libav development packag
     assert.deepEqual(report.items.filter((item) => item.label.endsWith("(development)")).map((item) => item.id), ["libcurl", "libffi"]);
 });
 
+test("managed FFmpeg prerequisite errors do not request system FFmpeg headers", () => {
+    const report = opam.inspectPrerequisites({ family: "linux" }, { userId: 1000, managedFfmpeg: true,
+        run: (_command, args) => ({ status: args.includes("libffi") ? 1 : 0, stdout: "2.1.0" }),
+    });
+    assert.match(report.error, /Missing: libffi/);
+    assert.match(report.error, /FFmpeg headers will be supplied by the local build/);
+    assert.doesNotMatch(report.error, /requires FFmpeg,|FFmpeg executable alone/);
+});
+
 for (const family of ["linux", "macos", "freebsd"]) {
     test(`${family} local FFmpeg build creates a persistent launcher with private library paths`, (context) => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-opam-local-"));

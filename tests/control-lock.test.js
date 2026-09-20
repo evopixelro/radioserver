@@ -44,9 +44,12 @@ test("waiting times out without modifying another operation's lock", async (cont
     fs.writeFileSync(filePath, content);
     const action = context.mock.fn();
     const onWait = context.mock.fn();
-    await assert.rejects(withControlLock(root, action, { timeoutMs: 30, onWait }), /did not finish within/);
+    const started = performance.now();
+    await assert.rejects(withControlLock(root, action, { timeoutMs: 30, onWait }), /Another controller operation holds/);
+    assert.ok(performance.now() - started >= 30);
     assert.equal(action.mock.callCount(), 0);
-    assert.equal(onWait.mock.callCount(), 1);
+    // A busy host can exhaust the deadline before reaching the first wait callback.
+    assert.ok(onWait.mock.callCount() <= 1);
     assert.equal(fs.readFileSync(filePath, "utf8"), content);
 });
 

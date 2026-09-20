@@ -63,11 +63,12 @@ function inspectPrerequisites(profile, { run = spawnSync, userId = process.getui
     if (userId === 0) {
         error = "Run the Liquidsoap source build as the service account, not root.";
     } else if (missingTools.length) {
-        error = `Liquidsoap source build requires: ${missingTools.join(", ")}. Install these tools and FFmpeg development libraries, then retry. RadioServer does not install OS packages.`;
+        error = `Liquidsoap source build requires: ${missingTools.join(", ")}. Install the listed tools and build dependencies, then retry. RadioServer does not install OS packages.`;
     } else if (oldOpam) {
         error = `Liquidsoap source build requires OPAM 2.1 or newer; detected ${opamVersion}. Upgrade OPAM before retrying.`;
     } else if (missingLibraries.length) {
-        error = `Liquidsoap source build requires FFmpeg, curl and libffi development libraries visible to pkg-config. Missing: ${missingLibraries.join(", ")}. Install the development packages and retry; the FFmpeg executable alone is not sufficient.`;
+        error = `Liquidsoap source build requires ${managedFfmpeg ? "curl and libffi" : "FFmpeg, curl and libffi"} development libraries visible to pkg-config. Missing: ${missingLibraries.join(", ")}. ` +
+            (managedFfmpeg ? "Install the listed development packages and retry; FFmpeg headers will be supplied by the local build." : "Install the development packages and retry; the FFmpeg executable alone is not sufficient.");
     } else if (oldFfmpeg) {
         error = "Liquidsoap source build requires FFmpeg 7 or newer development libraries (libavutil >= 59). The system FFmpeg libraries are too old. Provide compatible libraries through pkg-config and the runtime library search path, then retry; no system packages were changed.";
     }
