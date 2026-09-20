@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main, codex/autodj-schedule-validation, codex/latest-liquidsoap]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -95,7 +95,7 @@ jobs:
           cpu: 2
           copyback: false
           prepare: |
-            pkg install -y node22 ocaml-opam ffmpeg curl pkgconf gmake git rsync m4 libffi libsysinfo ca_root_nss
+            pkg install -y node22 ocaml-opam ffmpeg curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss
             pw useradd radio-test -m -s /bin/sh
           run: |
             set -eu
@@ -132,7 +132,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y opam build-essential pkg-config bubblewrap m4 rsync git libffi-dev libcurl4-openssl-dev libmp3lame-dev ffmpeg libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev
+          sudo apt-get install -y opam build-essential pkg-config bubblewrap m4 rsync git curl ca-certificates patch unzip tar gzip bzip2 xz-utils diffutils libffi-dev libcurl4-openssl-dev libmp3lame-dev ffmpeg libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev
       - name: Reject obsolete libraries, then build compatible FFmpeg libraries
         if: runner.os == 'Linux'
         run: |

@@ -3,6 +3,53 @@ const test = require("node:test");
 const native = require("../app/system-dependencies");
 const dependencies = require("../app/dependencies");
 
+for (const [family, distribution, expected] of [
+    ["linux", "debian", "sudo apt-get install opam build-essential"],
+    ["linux", "ubuntu", "sudo apt-get install opam build-essential"],
+    ["linux", "fedora", "sudo dnf install opam gcc make"],
+    ["linux", "arch", "sudo pacman -S --needed opam"],
+    ["macos", "", "brew install opam"],
+    ["freebsd", "", "pkg install ocaml-opam gmake"],
+]) {
+    test(`${family}/${distribution}: source dependency commands are yellow only when enabled`, () => {
+        const plain = native.sourceInstallationHelp({ family }, { distribution, color: false });
+        assert.ok(plain.includes(expected));
+        assert.doesNotMatch(plain, /\u001b\[/);
+        assert.match(plain, /FFmpeg < 7.*not sufficient/);
+        assert.match(plain, /PKG_CONFIG_PATH/);
+        assert.doesNotMatch(plain, /sudo npm|sudo brew|install liquidsoap/);
+        const colored = native.sourceInstallationHelp({ family }, { distribution, color: true });
+        assert.ok(colored.includes(`\u001b[33m${expected}`));
+        assert.match(colored, /\u001b\[0m\nPackages must/);
+        if (distribution === "fedora") assert.ok(plain.includes("'pkgconfig(libavutil)'"));
+    });
+}
+
+test("unknown source distributions get instructions without invented package commands", () => {
+    const help = native.sourceInstallationHelp({ family: "linux" }, { distribution: "unknown", color: false });
+    assert.match(help, /No verified package command/);
+    assert.doesNotMatch(help, /apt-get|dnf|pacman|brew|sudo/);
+});
+
+test("SHOUTcast extraction hints include only known packages and color commands yellow", () => {
+    for (const [distribution, command] of [["debian", "sudo apt-get install tar gzip"], ["fedora", "sudo dnf install tar gzip"], ["arch", "sudo pacman -S --needed tar gzip"]]) {
+        const help = native.archiveInstallationHelp({ family: "linux" }, ["tar", "gzip", "arbitrary;command"], { distribution, color: true });
+        assert.ok(help.includes(`\u001b[33m${command}\u001b[0m`));
+        assert.doesNotMatch(help, /arbitrary/);
+    }
+    assert.match(native.archiveInstallationHelp({ family: "linux" }, ["tar"], { distribution: "unknown" }), /no verified package command/);
+});
+
+test("common SHOUTcast library hints use matching Debian packages and preserve 32-bit requirements", () => {
+    const help = native.installationHelp({ family: "linux", architecture: "x86" }, { distribution: "debian", color: false,
+        missing: ["libstdc++.so.6", "libgcc_s.so.1", "libc.so.6", "libz.so.1"],
+    });
+    assert.match(help, /sudo apt-get install libstdc\+\+6:i386 libgcc-s1:i386 libc6:i386 zlib1g:i386/);
+    assert.match(help, /i386 architecture must be enabled/);
+    assert.doesNotMatch(help, /No verified package mapping/);
+    assert.doesNotMatch(native.installationHelp({ family: "linux" }, { distribution: "debian", missing: ["__proto__", "constructor"], color: false }), /sudo apt-get/);
+});
+
 test("ldd reports missing libraries separately from resolved dependencies", () => {
     const report = native.inspect("/radio/liquidsoap", { family: "linux", architecture: "x64" }, {
         run: () => ({ status: 0, stdout: "libtag.so.1 => not found\nlibc.so.6 => /lib/libc.so.6 (0x1)\nlibmad.so.0 => not found" }),

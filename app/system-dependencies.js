@@ -227,9 +227,13 @@ function installationHelp(profile, {
         } else {
             const packages = [];
             if (ffmpeg) packages.push("ffmpeg");
-            if (names.includes("libtag.so.1")) packages.push("libtag1v5");
+            const known = { "libtag.so.1": "libtag1v5", "libc.so.6": "libc6", "libstdc++.so.6": "libstdc++6", "libgcc_s.so.1": "libgcc-s1", "libz.so.1": "zlib1g" };
+            for (const name of names) {
+                if (Object.hasOwn(known, name)) packages.push(`${known[name]}${profile.architecture === "x86" ? ":i386" : ""}`);
+            }
             if (packages.length) commands.push(`sudo apt-get install ${packages.join(" ")}`);
-            const unknown = names.filter((name) => name !== "libtag.so.1");
+            if (profile.architecture === "x86" && packages.length) notes.push("The i386 architecture must be enabled in APT when installing 32-bit libraries on a 64-bit host");
+            const unknown = names.filter((name) => !Object.hasOwn(known, name));
             if (unknown.length) notes.push(`No verified package mapping for: ${unknown.join(", ")}. Use the matching vendor package's Depends field, not a package from another OS release`);
         }
     } else if (profile.family === "linux" && ["fedora", "rhel", "rocky", "almalinux", "centos"].includes(distribution)) {
@@ -265,6 +269,47 @@ function installationHelp(profile, {
         "Only OS dependencies need system privileges. Rerun npm run install or npm run update as your normal user"].join("\n");
 }
 
+function archiveInstallationHelp(profile, missing, {
+    distribution = linuxDistribution(), color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
+} = {}) {
+    const tools = missing.filter((name) => ["tar", "gzip"].includes(name));
+    let command = "";
+    if (profile.family === "linux" && tools.length) {
+        if (["debian", "ubuntu"].includes(distribution)) command = `sudo apt-get install ${tools.join(" ")}`;
+        else if (["fedora", "rhel", "rocky", "almalinux", "centos"].includes(distribution)) command = `sudo dnf install ${tools.join(" ")}`;
+        else if (distribution === "arch") command = `sudo pacman -S --needed ${tools.join(" ")}`;
+    }
+    return command ? `Install the SHOUTcast extraction tools separately:\n${color ? `\u001b[33m${command}\u001b[0m` : command}` :
+        "Install tar with gzip support using this distribution's package manager; no verified package command is available.";
+}
+
+function sourceInstallationHelp(profile, {
+    distribution = linuxDistribution(), color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
+} = {}) {
+    let command = "";
+    if (profile.family === "linux" && ["debian", "ubuntu"].includes(distribution)) {
+        command = "sudo apt-get install opam build-essential pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz-utils diffutils libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev libcurl4-openssl-dev libffi-dev";
+    } else if (profile.family === "linux" && ["fedora", "rhel", "rocky", "almalinux", "centos"].includes(distribution)) {
+        const libraries = ["libavutil", "libavformat", "libavcodec", "libavdevice", "libavfilter", "libswresample", "libswscale", "libcurl", "libffi"];
+        command = `sudo dnf install opam gcc make pkgconf-pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz diffutils ${libraries.map((library) => quote(`pkgconfig(${library})`)).join(" ")}`;
+    } else if (profile.family === "linux" && distribution === "arch") {
+        command = "sudo pacman -S --needed opam base-devel pkgconf rsync git bubblewrap unzip tar gzip bzip2 xz ffmpeg curl libffi";
+    } else if (profile.family === "macos") {
+        command = "brew install opam pkg-config ffmpeg curl libffi";
+    } else if (profile.family === "freebsd") {
+        command = "pkg install ocaml-opam gmake pkgconf m4 rsync git unzip ffmpeg curl libffi libsysinfo ca_root_nss";
+    }
+    const lines = command ? ["Suggested build dependencies (run separately):", color ? `\u001b[33m${command}\u001b[0m` : command] :
+        ["No verified package command for this distribution. Install OPAM >= 2.1, a C compiler, make, pkg-config and the development libraries listed above."];
+    lines.push("Packages must be available in your configured repositories; RadioServer does not install OS packages or enable repositories.");
+    lines.push("Older OS releases may only provide FFmpeg < 7. Installing their -dev packages alone is not sufficient; use compatible FFmpeg >= 7 libraries.");
+    lines.push("If the libraries are already installed in a custom prefix, expose their .pc files through PKG_CONFIG_PATH and configure the runtime library search path.");
+    if (profile.family === "macos") lines.push("Install Xcode Command Line Tools for the C compiler and make. Run Homebrew without sudo.");
+    if (profile.family === "freebsd") lines.push("Run pkg as root; only OS package installation needs system privileges.");
+    lines.push("OPAM can report additional build dependencies. Rerun npm run install or npm run update as the service account, not root.");
+    return lines.join("\n");
+}
+
 function assertAvailable(label, profile, report, options = {}) {
     if (report?.inspectionError) {
         const error = new Error(`${label}: ${report.inspectionError}`);
@@ -278,4 +323,4 @@ function assertAvailable(label, profile, report, options = {}) {
     throw error;
 }
 
-module.exports = { assertAvailable, inspect, installationHelp, linuxDistribution, missingFromError, parseLdd, statusItems, windowsImports };
+module.exports = { archiveInstallationHelp, assertAvailable, inspect, installationHelp, linuxDistribution, missingFromError, parseLdd, sourceInstallationHelp, statusItems, windowsImports };

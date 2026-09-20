@@ -6,33 +6,76 @@ const runtime = require("./liquidsoap-runtime");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
 
-function prerequisites(profile, { run = spawnSync, userId = process.getuid?.() } = {}) {
+function inspectPrerequisites(profile, { run = spawnSync, userId = process.getuid?.() } = {}) {
     if (!["linux", "macos", "freebsd"].includes(profile.family)) {
-        throw new Error(`No supported source build is available for ${profile.id}. Use an official compatible Liquidsoap binary.`);
+        return { items: [], error: `No supported source build is available for ${profile.id}. Use an official compatible Liquidsoap binary.` };
     }
-    if (userId === 0) throw new Error("Run the Liquidsoap source build as the service account, not root.");
-    let opamVersion = "";
-    const missing = ["opam", "pkg-config", "cc", profile.family === "freebsd" ? "gmake" : "make"].filter((command) => {
-        const result = run(command, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true });
-        if (command === "opam") opamVersion = String(result.stdout || "").trim();
-        return result.error || result.status !== 0;
+    const probe = (command, args) => run(command, args, {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true,
     });
-    if (missing.length) {
-        throw new Error(`Liquidsoap source build requires: ${missing.join(", ")}. Install these tools and FFmpeg development libraries, then retry. RadioServer does not install OS packages.`);
+    const succeeded = (result) => !result.error && result.status === 0;
+    const items = ["opam", "pkg-config", "cc", profile.family === "freebsd" ? "gmake" : "make"].map((command) => {
+        const result = probe(command, ["--version"]);
+        const found = succeeded(result);
+        return { id: command, label: command === "cc" ? "C compiler (cc)" : command, found,
+            detail: found ? String(result.stdout || "").trim().split(/\r?\n/)[0] || "available on PATH" : "not found or could not run" };
+    });
+    // BSD utilities do not all support --version. Ask the POSIX shell to locate them.
+    for (const command of ["patch", "unzip", "tar", "diff", "m4", ...(profile.family === "linux" ? ["bwrap"] : [])]) {
+        const result = probe("sh", ["-c", 'command -v "$1"', "radioserver-prerequisite", command]);
+        const found = succeeded(result);
+        items.push({ id: command, label: command === "bwrap" ? "bubblewrap (bwrap)" : command, found,
+            detail: found ? "available on PATH" : "not found on PATH" });
     }
+    const downloader = ["curl", "wget"].find((command) => succeeded(probe(command, ["--version"])));
+    items.push({ id: "curl or wget", label: "OPAM download tool (curl or wget)", found: Boolean(downloader),
+        detail: downloader ? `${downloader} available on PATH` : "neither curl nor wget could run" });
+    const missingTools = items.filter((item) => !item.found).map((item) => item.id);
+    const opam = items.find((item) => item.id === "opam");
+    const opamVersion = opam.detail;
     const version = /^(\d+)\.(\d+)(?:\.|$)/.exec(opamVersion);
-    if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 1)) {
-        throw new Error(`Liquidsoap source build requires OPAM 2.1 or newer; detected ${opamVersion || "an unreadable version"}. Upgrade OPAM before retrying.`);
+    const oldOpam = opam.found && (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 1));
+    if (oldOpam) {
+        opam.found = false;
+        opam.detail = `${opamVersion}; OPAM 2.1 or newer is required`;
     }
+    const pkgConfig = items.find((item) => item.id === "pkg-config").found;
     const libraries = ["libavutil", "libavformat", "libavcodec", "libavdevice", "libavfilter", "libswresample", "libswscale", "libcurl", "libffi"];
-    const headers = run("pkg-config", ["--exists", ...libraries], { stdio: "ignore", timeout: 15000 });
-    if (headers.error || headers.status !== 0) {
-        throw new Error("Liquidsoap source build requires FFmpeg, curl and libffi development libraries visible to pkg-config. Install the development packages and retry; the FFmpeg executable alone is not sufficient.");
+    const missingLibraries = [];
+    let oldFfmpeg = false;
+    for (const library of libraries) {
+        const found = pkgConfig && succeeded(probe("pkg-config", ["--exists", library]));
+        let detail = pkgConfig ? "not found by pkg-config" : "cannot check without pkg-config";
+        if (found) {
+            const result = probe("pkg-config", ["--modversion", library]);
+            detail = succeeded(result) ? String(result.stdout || "").trim() || "available through pkg-config" : "available through pkg-config (version unreadable)";
+            if (library === "libavutil") {
+                oldFfmpeg = !succeeded(probe("pkg-config", ["--atleast-version=59", library]));
+                detail += oldFfmpeg ? "; FFmpeg 7 or newer is required (libavutil >= 59)" : "; FFmpeg >= 7 check passed";
+            }
+        } else {
+            missingLibraries.push(library);
+        }
+        items.push({ id: library, label: `${library} (development)`, found: found && !(library === "libavutil" && oldFfmpeg), detail });
     }
-    const ffmpeg = run("pkg-config", ["--atleast-version=59", "libavutil"], { stdio: "ignore", timeout: 15000 });
-    if (ffmpeg.error || ffmpeg.status !== 0) {
-        throw new Error("Liquidsoap source build requires FFmpeg 7 or newer development libraries (libavutil >= 59). The system FFmpeg libraries are too old. Provide compatible libraries through pkg-config and the runtime library search path, then retry; no system packages were changed.");
+    let error = "";
+    if (userId === 0) {
+        error = "Run the Liquidsoap source build as the service account, not root.";
+    } else if (missingTools.length) {
+        error = `Liquidsoap source build requires: ${missingTools.join(", ")}. Install these tools and FFmpeg development libraries, then retry. RadioServer does not install OS packages.`;
+    } else if (oldOpam) {
+        error = `Liquidsoap source build requires OPAM 2.1 or newer; detected ${opamVersion}. Upgrade OPAM before retrying.`;
+    } else if (missingLibraries.length) {
+        error = `Liquidsoap source build requires FFmpeg, curl and libffi development libraries visible to pkg-config. Missing: ${missingLibraries.join(", ")}. Install the development packages and retry; the FFmpeg executable alone is not sufficient.`;
+    } else if (oldFfmpeg) {
+        error = "Liquidsoap source build requires FFmpeg 7 or newer development libraries (libavutil >= 59). The system FFmpeg libraries are too old. Provide compatible libraries through pkg-config and the runtime library search path, then retry; no system packages were changed.";
     }
+    return { items, error };
+}
+
+function prerequisites(profile, options = {}) {
+    const report = options.report || inspectPrerequisites(profile, options);
+    if (report.error) throw new Error(report.error);
 }
 
 function install(serverRoot, profile, version, {
@@ -100,4 +143,4 @@ function install(serverRoot, profile, version, {
     }
 }
 
-module.exports = { install, prerequisites };
+module.exports = { inspectPrerequisites, install, prerequisites };

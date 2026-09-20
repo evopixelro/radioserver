@@ -355,6 +355,7 @@ async function prepareInstall({
     existingBinary = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile),
     osRelease = runtimeProfile.family === "linux" ? readOsRelease() : {},
     force = false,
+    validateSource = true,
 } = {}) {
     const release = await releases.latestRelease();
     if (releases.compareVersions(release.version, "2.4.5") < 0) {
@@ -383,7 +384,7 @@ async function prepareInstall({
             // Old system binaries are left untouched; build a current private runtime instead.
         }
     }
-    opam.prerequisites(runtimeProfile);
+    if (validateSource) opam.prerequisites(runtimeProfile);
     return { ...base, strategy: "source" };
 }
 

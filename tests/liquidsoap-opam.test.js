@@ -99,3 +99,65 @@ test("source prerequisites reject obsolete OPAM and missing development librarie
         run: (_command, args) => ({ status: args[0] === "--atleast-version=59" ? 1 : 0, stdout: "2.1.0" }),
     }), /FFmpeg 7 or newer.*no system packages were changed/);
 });
+
+test("source report lists each development library and continues after missing dependencies", () => {
+    const probes = [];
+    const report = opam.inspectPrerequisites({ family: "linux" }, { userId: 1000, run(command, args) {
+        probes.push([command, ...args]);
+        if (command === "pkg-config" && args[0] === "--exists" && ["libavdevice", "libffi"].includes(args[1])) return { status: 1 };
+        return { status: 0, stdout: command === "opam" ? "2.1.0" : "60.8.100" };
+    } });
+    assert.equal(report.items.length, 20);
+    assert.deepEqual(report.items.filter((item) => !item.found).map((item) => item.id), ["libavdevice", "libffi"]);
+    assert.match(report.error, /Missing: libavdevice, libffi/);
+    assert.match(report.items.find((item) => item.id === "libavutil").detail, /60\.8\.100.*check passed/);
+    assert.ok(probes.some((args) => args[1] === "--exists" && args[2] === "libcurl"));
+    assert.throws(() => opam.prerequisites({ family: "linux" }, { report }), /Missing: libavdevice, libffi/);
+});
+
+test("missing pkg-config leaves every library visible but explicitly unchecked", () => {
+    const report = opam.inspectPrerequisites({ family: "linux" }, { userId: 1000, run(command, args) {
+        if (command === "pkg-config") {
+            assert.deepEqual(args, ["--version"]);
+            return { error: new Error("ENOENT"), status: null };
+        }
+        return { status: 0, stdout: "2.1.0" };
+    } });
+    assert.equal(report.items.filter((item) => item.label.endsWith("(development)")).length, 9);
+    for (const item of report.items.filter((item) => item.label.endsWith("(development)"))) {
+        assert.equal(item.found, false);
+        assert.match(item.detail, /cannot check without pkg-config/);
+    }
+    assert.match(report.error, /requires: pkg-config/);
+});
+
+test("source report marks obsolete OPAM and FFmpeg as incompatible instead of available", () => {
+    const report = opam.inspectPrerequisites({ family: "linux" }, { userId: 1000, run(command, args) {
+        return { status: args[0] === "--atleast-version=59" ? 1 : 0, stdout: command === "opam" ? "2.0.10" : "57.28.100" };
+    } });
+    assert.deepEqual(report.items.filter((item) => !item.found).map((item) => item.id), ["opam", "libavutil"]);
+    assert.match(report.items.find((item) => item.id === "libavutil").detail, /57\.28\.100.*FFmpeg 7 or newer/);
+});
+
+test("source reports command timeouts as missing without stopping the remaining probes", () => {
+    const report = opam.inspectPrerequisites({ family: "freebsd" }, { userId: 1000, run(command) {
+        if (command === "gmake") return { error: new Error("ETIMEDOUT"), status: null };
+        return { status: 0, stdout: "2.1.0" };
+    } });
+    assert.equal(report.items.at(-1).id, "libffi");
+    assert.equal(report.items.find((item) => item.id === "gmake").found, false);
+    assert.match(report.error, /requires: gmake/);
+});
+
+test("source report checks OPAM helper tools and accepts wget without requiring curl", () => {
+    const report = opam.inspectPrerequisites({ family: "linux" }, { userId: 1000, run(command, args) {
+        if (command === "sh") {
+            assert.deepEqual(args.slice(0, 3), ["-c", 'command -v "$1"', "radioserver-prerequisite"]);
+            return { status: ["patch", "bwrap"].includes(args[3]) ? 1 : 0 };
+        }
+        return { status: command === "curl" ? 1 : 0, stdout: "2.1.0" };
+    } });
+    assert.deepEqual(report.items.filter((item) => !item.found).map((item) => item.id), ["patch", "bwrap"]);
+    assert.match(report.items.find((item) => item.id === "curl or wget").detail, /wget available/);
+    assert.match(report.error, /requires: patch, bwrap/);
+});

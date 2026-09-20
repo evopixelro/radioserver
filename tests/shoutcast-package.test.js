@@ -24,6 +24,30 @@ function licenseFixture(context) {
     };
 }
 
+test("SHOUTcast checks tar and the GNU tar gzip helper only for managed Linux archives", () => {
+    const { getInstallRequirements } = require("../app/shoutcast-package");
+    const profile = { family: "linux", architecture: "x64", id: "linux-x64" };
+    const calls = [];
+    const report = getInstallRequirements(profile, { found: false }, { run(command) {
+        calls.push(command);
+        return { status: command === "tar" ? 0 : 1, stdout: "tar (GNU tar) 1.35" };
+    } });
+    assert.deepEqual(calls, ["tar", "gzip"]);
+    assert.deepEqual(report.missing, ["gzip"]);
+    const bsd = getInstallRequirements(profile, { found: false }, { run(command) {
+        assert.equal(command, "tar");
+        return { status: 0, stdout: "bsdtar 3.7.0 - libarchive" };
+    } });
+    assert.deepEqual(bsd.missing, []);
+    assert.equal(bsd.items.length, 1);
+    for (const source of ["PATH", "SC_SERV_BIN", "external"]) {
+        assert.deepEqual(getInstallRequirements(profile, { found: true, source }, { run: () => assert.fail("external binary needs no tar") }).items, []);
+    }
+    for (const id of ["windows-x64", "macos-arm64", "freebsd-x64"]) {
+        assert.deepEqual(getInstallRequirements({ id }, { found: false }, { run: () => assert.fail("no managed tar archive") }).items, []);
+    }
+});
+
 test("selects official latest SHOUTcast downloads for supported platforms", () => {
     for (const id of ["linux-x64", "linux-x86", "windows-x64", "windows-x86"]) {
         const [family, architecture] = id.split("-");

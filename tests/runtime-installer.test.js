@@ -4,7 +4,7 @@ const test = require("node:test");
 
 const dependencies = require("../app/dependencies");
 const platform = require("../app/platform");
-const { installRuntime } = require("../app/runtime-installer");
+const { getInstallRequirements, installRuntime, printRuntimeStatus } = require("../app/runtime-installer");
 const shoutcast = require("../app/shoutcast-package");
 
 test("install refuses to replace runtimes while a managed process is running", async (context) => {
@@ -38,7 +38,7 @@ test("runtime update refreshes SHOUTcast and Liquidsoap AutoDJ", async (context)
         missing: [],
     }));
     const preflight = context.mock.method(dependencies, "preflightInstall", () => {});
-    const plan = { strategy: "binary", version: "2.4.5" };
+    const plan = { strategy: "external", version: "2.4.5" };
     context.mock.method(dependencies, "prepareInstall", async () => plan);
     const updateShoutcast = context.mock.method(shoutcast, "installShoutcast", async () => {});
     const updateLiquidsoap = context.mock.method(dependencies, "installDependencies", async () => {});
@@ -100,10 +100,14 @@ function platformFixture(context, family, architecture, shoutcastFound) {
 
 test("latest Liquidsoap selection fails before SHOUTcast is replaced", async (context) => {
     const fixture = platformFixture(context, "linux", "x64", true);
+    const lines = [];
+    context.mock.method(console, "log", (line) => lines.push(line));
     context.mock.method(dependencies, "prepareInstall", async () => { throw new Error("UPSTREAM_UNAVAILABLE"); });
     await assert.rejects(installRuntime({ acceptLicense: true, force: true }), /UPSTREAM_UNAVAILABLE/);
     assert.equal(fixture.radio.mock.callCount(), 0);
     assert.equal(fixture.autodj.mock.callCount(), 0);
+    assert.match(lines.join("\n"), /Linux system dependencies/);
+    assert.match(lines.join("\n"), /Build requirements could not be selected/);
 });
 
 for (const family of ["linux", "windows", "macos", "freebsd"]) {
@@ -152,5 +156,153 @@ for (const [family, architecture] of [["macos", "x64"], ["macos", "arm64"], ["fr
         assert.equal(fixture.preflight.mock.callCount(), 0);
         assert.equal(fixture.radio.mock.callCount(), 0);
         assert.equal(fixture.autodj.mock.callCount(), 0);
+    });
+}
+
+for (const force of [false, true]) {
+    test(`${force ? "update" : "install"} prints every source prerequisite above runtimes before stopping`, async (context) => {
+        const fixture = platformFixture(context, "linux", "x64", true);
+        const lines = [];
+        context.mock.method(console, "log", (line) => lines.push(line));
+        context.mock.method(require("../app/system-dependencies"), "linuxDistribution", () => "debian");
+        context.mock.method(dependencies, "prepareInstall", async (options) => {
+            assert.equal(options.validateSource, false);
+            return { strategy: "source", version: "2.4.5" };
+        });
+        context.mock.method(require("../app/liquidsoap-opam"), "inspectPrerequisites", () => ({
+            items: [
+                { label: "opam", found: true, detail: "2.1.0" },
+                { label: "libavutil (development)", found: false, detail: "not found by pkg-config" },
+                { label: "libffi (development)", found: false, detail: "not found by pkg-config" },
+            ],
+            error: "BUILD_LIBRARIES_MISSING",
+        }));
+        await assert.rejects(installRuntime({ acceptLicense: true, force }), /BUILD_LIBRARIES_MISSING/);
+        const output = lines.join("\n");
+        assert.ok(output.indexOf("Linux system dependencies") < output.indexOf("Runtime requirements"));
+        assert.match(output, /FOUND opam/);
+        assert.match(output, /MISSING libavutil/);
+        assert.match(output, /MISSING libffi/);
+        assert.equal((output.match(/Runtime requirements/g) || []).length, 1);
+        assert.equal(fixture.radio.mock.callCount(), 0);
+        assert.equal(fixture.autodj.mock.callCount(), 0);
+    });
+}
+
+test("source status uses the same plain and colored markers as the runtime list", (context) => {
+    const lines = [];
+    context.mock.method(console, "log", (line) => lines.push(line));
+    const status = { runtimeProfile: { family: "linux", id: "linux-x64" }, items: [], systemRequirements: {
+        reason: "Liquidsoap source build", sourceMissing: true,
+        items: [{ label: "pkg-config", found: false, detail: "not found" }],
+    } };
+    printRuntimeStatus(status, { color: true });
+    assert.match(lines.join("\n"), /\u001b\[31mMISSING\u001b\[0m pkg-config/);
+    lines.length = 0;
+    printRuntimeStatus(status, { color: false });
+    assert.doesNotMatch(lines.join("\n"), /\u001b\[/);
+});
+
+test("official Linux binaries check extraction tools without probing source prerequisites", (context) => {
+    context.mock.method(require("../app/liquidsoap-opam"), "inspectPrerequisites", () => assert.fail("must not probe build dependencies"));
+    const status = { runtimeProfile: { family: "linux", id: "linux-x64" } };
+    for (const found of [false, true]) {
+        const report = getInstallRequirements(status, { strategy: "binary" }, { run: (command, args) => {
+            assert.equal(command, "dpkg-deb");
+            assert.deepEqual(args, ["--version"]);
+            return { status: found ? 0 : 1 };
+        } });
+        assert.equal(report.items.length, 1);
+        assert.equal(report.items[0].found, found);
+        assert.equal(Boolean(report.error), !found);
+        assert.match(report.note, /development libraries are not required/);
+    }
+    assert.equal(getInstallRequirements(status, { strategy: "external" }).items.length, 0);
+    const windows = getInstallRequirements({ runtimeProfile: { family: "windows" } }, { strategy: "binary" }, {
+        systemRoot: "C:\\Windows", run(command) {
+            assert.equal(command, "C:\\Windows\\System32\\tar.exe");
+            return { status: 0 };
+        },
+    });
+    assert.equal(windows.items.length, 1);
+    assert.equal(windows.items[0].found, true);
+    assert.match(windows.note, /FFmpeg is bundled/);
+});
+
+for (const force of [false, true]) {
+    test(`SHOUTcast ${force ? "update" : "install"} stops before downloads when archive tools are missing`, async (context) => {
+        const fixture = platformFixture(context, "linux", "x64", true);
+        const lines = [];
+        context.mock.method(console, "log", (line) => lines.push(line));
+        context.mock.method(shoutcast, "getInstallRequirements", () => ({
+            items: [{ label: "SHOUTcast archive extractor (tar)", found: false, detail: "not found" }], missing: ["tar"],
+        }));
+        await assert.rejects(installRuntime({ acceptLicense: true, force }), /SHOUTcast extraction requires: tar/);
+        assert.match(lines.join("\n"), /MISSING SHOUTcast archive extractor/);
+        assert.equal(fixture.radio.mock.callCount(), 0);
+        assert.equal(fixture.autodj.mock.callCount(), 0);
+    });
+}
+
+test("Windows extraction requirements never fall back to an unrelated tar on PATH", () => {
+    const report = getInstallRequirements({ runtimeProfile: { family: "windows" } }, { strategy: "binary" }, {
+        systemRoot: "relative", run: () => assert.fail("must not search PATH"),
+    });
+    assert.equal(report.items[0].found, false);
+    assert.match(report.error, /Git Bash tar is not a compatible substitute/);
+});
+
+for (const [family, missing, command] of [
+    ["linux", "libtag.so.1", "sudo apt-get install libtag1v5"],
+    ["windows", "vcruntime140.dll", "winget install --exact --id Microsoft.VCRedist.2015+.x64"],
+    ["macos", "/opt/homebrew/lib/libtag.1.dylib", "brew install taglib"],
+    ["freebsd", "libtag.so.1", "pkg install taglib"],
+]) {
+    test(`${family} native dependency commands appear in yellow above runtime requirements`, (context) => {
+        const lines = [];
+        context.mock.method(console, "log", (line) => lines.push(line));
+        const native = require("../app/system-dependencies");
+        const help = native.installationHelp;
+        context.mock.method(native, "installationHelp", (profile, options) => help(profile, { ...options, distribution: "debian" }));
+        const report = { missing: [missing], libraries: [], checked: true };
+        const status = { runtimeProfile: { family, architecture: "x64" }, items: [], shoutcastLibraries: report };
+        status.systemRequirements = getInstallRequirements(status, { strategy: "external" });
+        printRuntimeStatus(status, { color: true });
+        const output = lines.join("\n");
+        assert.ok(output.includes(`\u001b[33m${command}\u001b[0m`));
+        assert.ok(output.indexOf(command) < output.indexOf("Runtime requirements"));
+        lines.length = 0;
+        printRuntimeStatus(status, { color: false });
+        assert.doesNotMatch(lines.join("\n"), /\u001b\[/);
+    });
+}
+
+test("missing Linux extraction tools include a yellow command without coloring explanatory text", (context) => {
+    const lines = [];
+    context.mock.method(console, "log", (line) => lines.push(line));
+    const status = { runtimeProfile: { family: "linux" }, items: [] };
+    status.systemRequirements = getInstallRequirements(status, { strategy: "binary" }, { run: () => ({ status: 1 }) });
+    printRuntimeStatus(status, { color: true });
+    assert.ok(lines.includes("\u001b[33msudo apt-get install dpkg\u001b[0m"));
+    assert.ok(lines.includes("Install the package extraction tool separately (Debian/Ubuntu):"));
+});
+
+for (const [family, name] of [["linux", "Linux"], ["windows", "Windows"], ["macos", "macOS"], ["freebsd", "FreeBSD"]]) {
+    test(`${family} puts native libraries in the system section without duplicating them`, (context) => {
+        const lines = [];
+        context.mock.method(console, "log", (line) => lines.push(line));
+        context.mock.method(require("../app/liquidsoap-opam"), "inspectPrerequisites", () => assert.fail("existing runtimes need no compiler"));
+        const nativeLibraries = { checked: true, libraries: [{ name: "example", found: true }], missing: [] };
+        const nativeItem = { id: "native:Liquidsoap", label: "Liquidsoap native libraries", found: true, detail: "1 dependency checked" };
+        const status = { runtimeProfile: { family, id: `${family}-x64` }, dependencyStatus: { nativeLibraries },
+            items: [nativeItem, { label: "Node.js", found: true, detail: "v24.0.0" }] };
+        status.systemRequirements = getInstallRequirements(status, { strategy: "external" });
+        printRuntimeStatus(status, { color: false });
+        const output = lines.join("\n");
+        assert.ok(output.includes(`${name} system dependencies`));
+        assert.ok(output.indexOf("Liquidsoap native libraries") < output.indexOf("Runtime requirements"));
+        assert.equal((output.match(/Liquidsoap native libraries/g) || []).length, 1);
+        assert.match(output, /FOUND Node\.js/);
+        assert.doesNotMatch(output, /MISSING.*opam|libavutil \(development\)/);
     });
 }

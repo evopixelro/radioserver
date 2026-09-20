@@ -55,6 +55,26 @@ function verifyPackage(packageInfo) {
     });
 }
 
+function getInstallRequirements(runtimeProfile, existing, { run = spawnSync } = {}) {
+    const specification = SHOUTCAST_PACKAGES[runtimeProfile.id];
+    if (specification?.kind !== "archive" || (existing.found && ["PATH", "SC_SERV_BIN", "external"].includes(existing.source))) {
+        return { items: [], missing: [] };
+    }
+    const options = { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true };
+    const tar = run("tar", ["--version"], options);
+    const found = !tar.error && tar.status === 0;
+    const items = [{ id: "archive:tar", label: "SHOUTcast archive extractor (tar)", found,
+        detail: found ? "available on PATH" : "not found or could not run" }];
+    // GNU tar delegates .tar.gz decompression to gzip; libarchive handles it itself.
+    if (found && /GNU tar/.test(tar.stdout || "")) {
+        const gzip = run("gzip", ["--version"], options);
+        const gzipFound = !gzip.error && gzip.status === 0;
+        items.push({ id: "archive:gzip", label: "SHOUTcast decompressor (gzip)", found: gzipFound,
+            detail: gzipFound ? "available on PATH" : "required by GNU tar, not found or could not run" });
+    }
+    return { items, missing: items.filter((item) => !item.found).map((item) => item.id.slice(8)) };
+}
+
 async function downloadPackage(packageInfo) {
     packageInfo.sha256 = await download.downloadCurrent(packageInfo);
     return packageInfo.filePath;
@@ -192,6 +212,7 @@ module.exports = {
     SHOUTCAST_PACKAGES,
     downloadPackage,
     getPackage,
+    getInstallRequirements,
     installShoutcast,
     verifyPackage,
 };

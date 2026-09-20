@@ -54,6 +54,19 @@ separately, then repeat `npm run install` as the service account. The controller
 never installs OS packages itself. Colors are disabled for redirected output
 and `NO_COLOR`.
 
+On Linux, Windows, macOS and FreeBSD, a system dependency section appears above
+the runtime list during install and update. It includes native library checks for
+SHOUTcast and Liquidsoap when their executables are available, and archive tools
+needed for installation. Source builds list each build tool and development library
+separately, including the detected version and the FFmpeg minimum version check.
+Missing libraries include package installation commands where a mapping is known,
+shown in yellow below the system dependency list. Libraries installed outside
+the system paths must be visible to `pkg-config`. Official binary installations
+do not require the source-build tools; the Windows package also includes FFmpeg.
+The checks do not install system packages.
+For a first installation, native libraries are checked again after extraction,
+before activating the new executable.
+
 ### Initial configuration
 
 Copy the templates only when the corresponding active files do not exist:

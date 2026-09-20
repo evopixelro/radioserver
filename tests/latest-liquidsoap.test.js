@@ -67,6 +67,14 @@ test("source prerequisites fail before any runtime files are created", async (co
     assert.deepEqual(fs.readdirSync(options.serverRoot), []);
 });
 
+test("install planning can defer prerequisite validation until after the complete status report", async (context) => {
+    const options = fixture(context);
+    context.mock.method(opam, "prerequisites", () => assert.fail("validation must be deferred"));
+    const plan = await dependencies.prepareInstall({ ...options, validateSource: false });
+    assert.equal(plan.strategy, "source");
+    assert.deepEqual(fs.readdirSync(options.serverRoot), []);
+});
+
 test("upstream lookup errors do not fall back to the installed version", async (context) => {
     const options = fixture(context);
     context.mock.method(releases, "latestRelease", async () => { throw new Error("HTTP 503"); });
