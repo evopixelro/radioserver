@@ -2,6 +2,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const dependencies = require("./dependencies");
 const opam = require("./liquidsoap-opam");
+const ffmpeg = require("./ffmpeg-runtime");
 const platform = require("./platform");
 const shoutcast = require("./shoutcast-package");
 const systemDependencies = require("./system-dependencies");
@@ -44,18 +45,32 @@ function getRuntimeStatus(serverRoot = path.resolve(__dirname, "..")) {
 function printRuntimeStatus(status, {
     color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
 } = {}) {
-    const printItem = (item) => {
+    const printItem = (item, indent = "  ") => {
         const marker = item.found ? "FOUND" : "MISSING";
         const renderedMarker = colorize(marker, item.found ? "green" : "red", color);
-        console.log(`  ${renderedMarker} ${item.label}: ${item.detail}`);
+        console.log(`${indent}${renderedMarker} ${item.label}: ${item.detail}`);
     };
     const requirements = status.systemRequirements;
     if (requirements) {
         const name = { linux: "Linux", windows: "Windows", macos: "macOS", freebsd: "FreeBSD" }[status.runtimeProfile.family] || status.runtimeProfile.id;
-        console.log(`${name} system dependencies (${requirements.reason}):`);
-        for (const item of requirements.items) printItem(item);
-        if (requirements.note) console.log(`  ${requirements.note}`);
-        if (requirements.sourceMissing) console.log(systemDependencies.sourceInstallationHelp(status.runtimeProfile, { color }));
+        console.log(`${name} system dependencies (SHOUTcast and Liquidsoap):`);
+        systemDependencies.printStatus("SHOUTcast", status.shoutcastLibraries, { color });
+        systemDependencies.printStatus("Liquidsoap", status.dependencyStatus?.nativeLibraries, { color });
+        console.log(`  ${requirements.reason}:`);
+        for (const item of requirements.items) {
+            if (!/^(native|abi|inspection):/.test(item.id || "")) printItem(item, "    ");
+        }
+        if (requirements.note) console.log(`    ${requirements.note}`);
+        if (requirements.archiveItems?.length) {
+            console.log("  SHOUTcast installation tools (not runtime libraries):");
+            for (const item of requirements.archiveItems) printItem(item, "    ");
+        }
+        if (requirements.ffmpegItems?.length) {
+            console.log("  FFmpeg local build:");
+            for (const item of requirements.ffmpegItems) printItem(item, "    ");
+        }
+        if (requirements.sourceMissing) console.log(systemDependencies.sourceInstallationHelp(status.runtimeProfile, { color, managedFfmpeg: requirements.managedFfmpeg }));
+        if (requirements.ffmpegMissing) console.log(systemDependencies.ffmpegInstallationHelp(status.runtimeProfile, { color }));
         if (requirements.extractionMissing) {
             console.log("Install the package extraction tool separately (Debian/Ubuntu):");
             console.log(colorize("sudo apt-get install dpkg", "yellow", color));
@@ -71,13 +86,10 @@ function printRuntimeStatus(status, {
                 }));
             }
         }
-        if (status.dependencyStatus?.missing?.includes("ffmpeg") && status.runtimeProfile.family !== "windows") {
+        if (!requirements.managedFfmpeg && status.dependencyStatus?.missing?.includes("ffmpeg") && status.runtimeProfile.family !== "windows") {
             hints.add(systemDependencies.installationHelp(status.runtimeProfile, { ffmpeg: true, color }));
         }
         for (const hint of hints) console.log(hint);
-        if (status.shoutcastBinary && !status.shoutcastBinary.found) {
-            console.log("  SHOUTcast native libraries will be checked when its executable is available.");
-        }
         console.log("");
     }
     console.log(`Runtime requirements for ${status.runtimeProfile.id}:`);
@@ -92,9 +104,10 @@ function getInstallRequirements(status, plan, { run = spawnSync, systemRoot = pr
         ...systemDependencies.statusItems("Liquidsoap", status.dependencyStatus?.nativeLibraries),
     ];
     if (plan.strategy === "source") {
-        const report = opam.inspectPrerequisites(status.runtimeProfile, { run });
+        const report = opam.inspectPrerequisites(status.runtimeProfile, { run, managedFfmpeg: plan.managedFfmpeg });
         return { ...report, items: [...nativeItems, ...report.items],
-            sourceMissing: report.items.some((item) => !item.found), reason: "Liquidsoap source build" };
+            sourceMissing: report.items.some((item) => !item.found), reason: "Liquidsoap source build",
+            ...(plan.managedFfmpeg ? { note: "FFmpeg development libraries will be provided by the managed local FFmpeg build." } : {}) };
     }
     if (plan.strategy === "binary" && status.runtimeProfile.family === "linux") {
         const result = run("dpkg-deb", ["--version"], {
@@ -147,6 +160,7 @@ async function installRuntime({
     console.log(force ? "Updating managed radio runtimes..." : "Installing radio runtimes...");
     const status = getRuntimeStatus(serverRoot);
     let plan;
+    let ffmpegPlan;
     try {
         for (const binary of [status.shoutcastBinary, status.dependencyStatus.liquidsoap]) {
             if (!binary.found && ["SC_SERV_BIN", "LIQUIDSOAP_BIN"].includes(binary.source)) {
@@ -159,12 +173,21 @@ async function installRuntime({
         // Select the exact installation path before requiring any source-build tools.
         plan = await dependencies.prepareInstall({ force, serverRoot, runtimeProfile: status.runtimeProfile,
             existingBinary: status.dependencyStatus.liquidsoap, validateSource: false });
+        plan.managedFfmpeg = status.runtimeProfile.family !== "windows";
         status.systemRequirements = getInstallRequirements(status, plan);
+        status.systemRequirements.managedFfmpeg = plan.managedFfmpeg;
         const archive = shoutcast.getInstallRequirements(status.runtimeProfile, status.shoutcastBinary);
-        status.systemRequirements.items.unshift(...archive.items);
+        status.systemRequirements.archiveItems = archive.items;
         status.systemRequirements.archiveMissing = archive.missing;
         if (archive.missing.length) {
             status.systemRequirements.error ||= `SHOUTcast extraction requires: ${archive.missing.join(", ")}. Install the missing tools and retry; no runtimes were replaced.`;
+        }
+        ffmpegPlan = await ffmpeg.prepare(serverRoot, status.runtimeProfile);
+        if (ffmpegPlan.strategy === "source") {
+            const report = ffmpeg.inspectPrerequisites(status.runtimeProfile);
+            status.systemRequirements.ffmpegItems = report.items;
+            status.systemRequirements.ffmpegMissing = report.items.some((item) => !item.found);
+            status.systemRequirements.error ||= report.error;
         }
     } finally {
         // Even selection failures must leave the current runtime status visible.
@@ -182,9 +205,11 @@ async function installRuntime({
         force,
         runtimeProfile: status.runtimeProfile,
         serverRoot,
+        managedFfmpeg: plan.managedFfmpeg,
     });
+    const localFfmpeg = await ffmpeg.install(serverRoot, status.runtimeProfile, ffmpegPlan);
     await shoutcast.installShoutcast({ acceptLicense, force: force || repairShoutcast, serverRoot });
-    await dependencies.installDependencies({ force, serverRoot, plan });
+    await dependencies.installDependencies({ force, serverRoot, plan, ...(localFfmpeg ? { ffmpeg: localFfmpeg } : {}) });
     console.log(force ? "Managed runtime update completed." : "Runtime installation completed.");
 }
 

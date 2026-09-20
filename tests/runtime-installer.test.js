@@ -6,6 +6,12 @@ const dependencies = require("../app/dependencies");
 const platform = require("../app/platform");
 const { getInstallRequirements, installRuntime, printRuntimeStatus } = require("../app/runtime-installer");
 const shoutcast = require("../app/shoutcast-package");
+const ffmpeg = require("../app/ffmpeg-runtime");
+
+test.beforeEach((context) => {
+    context.mock.method(ffmpeg, "prepare", async () => ({ strategy: "bundled" }));
+    context.mock.method(ffmpeg, "install", async () => null);
+});
 
 test("install refuses to replace runtimes while a managed process is running", async (context) => {
     const radio = require("../app/process-manager");
@@ -180,6 +186,8 @@ for (const force of [false, true]) {
         await assert.rejects(installRuntime({ acceptLicense: true, force }), /BUILD_LIBRARIES_MISSING/);
         const output = lines.join("\n");
         assert.ok(output.indexOf("Linux system dependencies") < output.indexOf("Runtime requirements"));
+        assert.match(output, /Linux system dependencies \(SHOUTcast and Liquidsoap\):/);
+        assert.ok(output.indexOf("SHOUTcast native libraries:") < output.indexOf("Liquidsoap source build:"));
         assert.match(output, /FOUND opam/);
         assert.match(output, /MISSING libavutil/);
         assert.match(output, /MISSING libffi/);
@@ -239,6 +247,7 @@ for (const force of [false, true]) {
         }));
         await assert.rejects(installRuntime({ acceptLicense: true, force }), /SHOUTcast extraction requires: tar/);
         assert.match(lines.join("\n"), /MISSING SHOUTcast archive extractor/);
+        assert.match(lines.join("\n"), /SHOUTcast installation tools \(not runtime libraries\):\n    MISSING SHOUTcast archive extractor/);
         assert.equal(fixture.radio.mock.callCount(), 0);
         assert.equal(fixture.autodj.mock.callCount(), 0);
     });
@@ -299,10 +308,93 @@ for (const [family, name] of [["linux", "Linux"], ["windows", "Windows"], ["maco
         status.systemRequirements = getInstallRequirements(status, { strategy: "external" });
         printRuntimeStatus(status, { color: false });
         const output = lines.join("\n");
-        assert.ok(output.includes(`${name} system dependencies`));
+        assert.ok(output.includes(`${name} system dependencies (SHOUTcast and Liquidsoap):`));
         assert.ok(output.indexOf("Liquidsoap native libraries") < output.indexOf("Runtime requirements"));
         assert.equal((output.match(/Liquidsoap native libraries/g) || []).length, 1);
+        assert.match(output, /FOUND Liquidsoap library \(example\): available to the OS loader/);
         assert.match(output, /FOUND Node\.js/);
         assert.doesNotMatch(output, /MISSING.*opam|libavutil \(development\)/);
     });
 }
+
+test("first installation distinguishes uninspected native libraries from missing executables", (context) => {
+    const lines = [];
+    context.mock.method(console, "log", (line) => lines.push(line));
+    const status = { runtimeProfile: { family: "linux", id: "linux-x64" }, items: [
+        { label: "SHOUTcast", found: false, detail: "not found" },
+        { label: "Liquidsoap", found: false, detail: "not found" },
+    ] };
+    status.systemRequirements = getInstallRequirements(status, { strategy: "unknown" });
+    printRuntimeStatus(status, { color: false });
+    const output = lines.join("\n");
+    for (const name of ["SHOUTcast", "Liquidsoap"]) {
+        assert.ok(output.includes(`${name} native libraries:\n    NOT CHECKED: ${name} executable is not available`));
+        assert.ok(output.indexOf(`${name} native libraries:`) < output.indexOf("Runtime requirements for linux-x64:"));
+        assert.ok(output.includes(`MISSING ${name}: not found`));
+    }
+    assert.doesNotMatch(output, /FOUND|\u001b\[/);
+});
+
+test("both engines list each native library before installation tools and yellow package commands", (context) => {
+    const lines = [];
+    context.mock.method(console, "log", (line) => lines.push(line));
+    const native = require("../app/system-dependencies");
+    const help = native.installationHelp;
+    context.mock.method(native, "installationHelp", (profile, options) => help(profile, { ...options, distribution: "ubuntu" }));
+    const shoutcastLibraries = { checked: true, missing: ["libm.so.6"], libraries: [
+        { name: "libc.so.6", found: true }, { name: "libm.so.6", found: false },
+    ] };
+    const nativeLibraries = { checked: true, missing: [], libraries: [{ name: "libavutil.so.59", found: true }] };
+    const status = { runtimeProfile: { family: "linux", architecture: "x64", id: "linux-x64" }, items: [],
+        shoutcastLibraries, dependencyStatus: { nativeLibraries },
+    };
+    status.systemRequirements = getInstallRequirements(status, { strategy: "external" });
+    status.systemRequirements.archiveItems = [{ label: "SHOUTcast archive extractor (tar)", found: true, detail: "available on PATH" }];
+    printRuntimeStatus(status, { color: true });
+    const output = lines.join("\n");
+    assert.match(output, /\u001b\[32mFOUND\u001b\[0m SHOUTcast library \(libc\.so\.6\)/);
+    assert.match(output, /\u001b\[31mMISSING\u001b\[0m SHOUTcast library \(libm\.so\.6\)/);
+    assert.match(output, /\u001b\[32mFOUND\u001b\[0m Liquidsoap library \(libavutil\.so\.59\)/);
+    assert.ok(output.includes("\u001b[33msudo apt-get install libc6\u001b[0m"));
+    assert.ok(output.indexOf("SHOUTcast library (libm.so.6)") < output.indexOf("Liquidsoap native libraries:"));
+    assert.ok(output.indexOf("Liquidsoap library (libavutil.so.59)") < output.indexOf("SHOUTcast installation tools"));
+    assert.ok(output.indexOf("SHOUTcast installation tools") < output.indexOf("sudo apt-get"));
+    assert.ok(output.indexOf("sudo apt-get") < output.indexOf("Runtime requirements"));
+    assert.equal((output.match(/SHOUTcast library \(libc\.so\.6\)/g) || []).length, 1);
+});
+
+for (const force of [false, true]) {
+    test(`${force ? "update" : "install"} builds local FFmpeg before Liquidsoap and does not require the system executable`, async (context) => {
+        const fixture = platformFixture(context, "linux", "x64", true);
+        const order = [];
+        const local = { version: "8.1.2", prefix: "/radio/bin/ffmpeg/linux-x64/builds/8.1.2-test", binary: "/radio/local/ffmpeg" };
+        context.mock.method(ffmpeg, "prepare", async () => ({ strategy: "source", version: "8.1.2" }));
+        context.mock.method(ffmpeg, "inspectPrerequisites", () => ({ items: [], error: "" }));
+        context.mock.method(ffmpeg, "install", async () => { order.push("ffmpeg"); return local; });
+        context.mock.method(dependencies, "installDependencies", async (options) => {
+            order.push("liquidsoap");
+            assert.equal(options.ffmpeg, local);
+        });
+        await installRuntime({ force, acceptLicense: true });
+        assert.deepEqual(order, ["ffmpeg", "liquidsoap"]);
+        assert.equal(fixture.preflight.mock.calls[0].arguments[0].managedFfmpeg, true);
+    });
+}
+
+test("missing local FFmpeg build libraries are printed before any runtimes are changed", async (context) => {
+    const fixture = platformFixture(context, "linux", "x64", true);
+    const lines = [];
+    context.mock.method(console, "log", (line) => lines.push(line));
+    context.mock.method(ffmpeg, "prepare", async () => ({ strategy: "source", version: "8.1.2" }));
+    context.mock.method(ffmpeg, "inspectPrerequisites", () => ({
+        items: [{ label: "lame (development)", found: false, detail: "missing" }], error: "MISSING_BUILD_LAME",
+    }));
+    const build = context.mock.method(ffmpeg, "install", () => assert.fail("must not build"));
+    await assert.rejects(installRuntime({ acceptLicense: true }), /MISSING_BUILD_LAME/);
+    const output = lines.join("\n");
+    assert.ok(output.indexOf("MISSING lame") < output.indexOf("Runtime requirements"));
+    assert.match(output, /Suggested FFmpeg build dependencies/);
+    assert.equal(build.mock.callCount(), 0);
+    assert.equal(fixture.radio.mock.callCount(), 0);
+    assert.equal(fixture.autodj.mock.callCount(), 0);
+});

@@ -39,7 +39,7 @@ jobs:
           curl --fail --location --retry 3 "https://github.com/savonet/liquidsoap-release-assets/releases/download/v2.4.5/$package" -o "$RUNNER_TEMP/$package"
           echo "1e0233bf152baffdaa0fb61d8c86d4879cab440d5310711242897b9bc739b943  $RUNNER_TEMP/$package" | sha256sum --check
           sudo apt-get update
-          sudo apt-get install -y "$RUNNER_TEMP/$package"
+          sudo apt-get install -y "$RUNNER_TEMP/$package" build-essential pkg-config tar xz-utils gnupg nasm libmp3lame-dev libssl-dev zlib1g-dev
           echo "LIQUIDSOAP_TEST_BIN=$(command -v liquidsoap)" >> "$GITHUB_ENV"
           echo "LIQUIDSOAP_TEST_RESOURCES=/usr/share/liquidsoap" >> "$GITHUB_ENV"
       - name: Install Liquidsoap on Windows
@@ -95,7 +95,7 @@ jobs:
           cpu: 2
           copyback: false
           prepare: |
-            pkg install -y node22 ocaml-opam ffmpeg curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss
+            pkg install -y node22 ocaml-opam curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl gtar xz
             pw useradd radio-test -m -s /bin/sh
           run: |
             set -eu
@@ -132,20 +132,23 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y opam build-essential pkg-config bubblewrap m4 rsync git curl ca-certificates patch unzip tar gzip bzip2 xz-utils diffutils libffi-dev libcurl4-openssl-dev libmp3lame-dev ffmpeg libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev
-      - name: Reject obsolete libraries, then build compatible FFmpeg libraries
+          sudo apt-get install -y opam build-essential pkg-config bubblewrap m4 rsync git curl ca-certificates patch unzip tar gzip bzip2 xz-utils diffutils libffi-dev libcurl4-openssl-dev libmp3lame-dev libssl-dev zlib1g-dev gnupg nasm ffmpeg
+      - name: Verify that the system FFmpeg is still the Ubuntu version
         if: runner.os == 'Linux'
         run: |
-          node -e 'require("node:assert/strict").throws(() => require("./app/liquidsoap-opam").prerequisites(require("./app/platform").resolveProfile()), /FFmpeg 7 or newer/);'
-          bash .github/scripts/build-ffmpeg.sh
+          ffmpeg -version
+          test "$(ffmpeg -version | head -n1 | cut -d' ' -f3 | cut -d. -f1)" = 4
       - name: macOS build prerequisites
         if: runner.os == 'macOS'
         run: |
-          brew install opam ffmpeg pkg-config libffi
-          echo "PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-      - name: Install the latest official Liquidsoap
+          brew install opam pkg-config libffi xz gnupg lame openssl@3 zlib curl
+          echo "PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+      - name: Install stable local FFmpeg and the latest official Liquidsoap
         env:
           LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
         run: node .github/scripts/install-liquidsoap.js "$RUNNER_TEMP/radio-installer"
       - name: Validate native playback with the compiled runtime
         run: node --test --test-reporter=tap tests/liquidsoap-runtime.test.js tests/autodj-playlist.test.js tests/autodj-reconnect.test.js tests/playlist-schedule-runtime.test.js
+      - name: Confirm the system FFmpeg was not replaced
+        if: runner.os == 'Linux'
+        run: test "$(ffmpeg -version | head -n1 | cut -d' ' -f3 | cut -d. -f1)" = 4

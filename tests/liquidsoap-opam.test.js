@@ -85,6 +85,43 @@ test("missing build tools are reported without installing OS packages", () => {
     }), /gmake.*does not install OS packages/);
 });
 
+test("managed FFmpeg planning does not require Ubuntu's libav development packages", () => {
+    const report = opam.inspectPrerequisites({ family: "linux" }, { userId: 1000, managedFfmpeg: true,
+        run: (_command, args) => {
+            assert.equal(args.some((arg) => /^lib(?:av|sw)/.test(arg)), false);
+            return { status: 0, stdout: "2.1.0" };
+        },
+    });
+    assert.equal(report.error, "");
+    assert.deepEqual(report.items.filter((item) => item.label.endsWith("(development)")).map((item) => item.id), ["libcurl", "libffi"]);
+});
+
+for (const family of ["linux", "macos", "freebsd"]) {
+    test(`${family} local FFmpeg build creates a persistent launcher with private library paths`, (context) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-opam-local-"));
+        context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+        const profile = { family, id: `${family}-x64`, architecture: "x64" };
+        const ffmpeg = { version: "8.1.2", prefix: path.join(root, "bin", "ffmpeg", profile.id, "builds", "8.1.2-example") };
+        const libraryPath = family === "macos" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
+        const binary = opam.install(root, profile, "2.4.5", { ffmpeg, userId: 1000,
+            run(_command, _args, options) {
+                assert.ok(options.env.PKG_CONFIG_PATH.startsWith(path.join(ffmpeg.prefix, "lib", "pkgconfig")));
+                return { status: 0, stdout: "2.1.0" };
+            },
+            validate: () => ({ ok: true }), verify: () => "2.4.5", activate: activateRuntime,
+        });
+        const launcher = fs.readFileSync(binary, "utf8");
+        assert.match(launcher, /^#!\/bin\/sh\nexport PATH=/);
+        assert.ok(launcher.includes(`export ${libraryPath}=`));
+        assert.ok(launcher.includes(`\${${libraryPath}:+:\"$${libraryPath}\"}`));
+        assert.match(launcher, /exec '[^\n]+' "\$@"\n$/);
+        const native = require("../app/liquidsoap-runtime").getNativeRuntime(binary, profile);
+        assert.ok(native.binary.startsWith(path.join(root, "bin", "liquidsoap", "opam")));
+        assert.ok(native.environment[libraryPath].startsWith(path.join(ffmpeg.prefix, "lib")));
+        assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(binary), "runtime.json"))).ffmpegPrefix, ffmpeg.prefix);
+    });
+}
+
 test("source prerequisites reject obsolete OPAM and missing development libraries", () => {
     const profile = { family: "linux", id: "linux-x64" };
     for (const version of ["1.2.2", "2.0.10", "unknown"]) {

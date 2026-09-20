@@ -45,7 +45,7 @@ npm run install
 ```
 
 `npm install` also runs the installation lifecycle script. `npm run install`
-downloads or builds managed runtimes into `bin/`, including Liquidsoap's standard library, or validates
+downloads or builds managed runtimes into `bin/`, including Liquidsoap's standard library and local FFmpeg, or validates
 externally supplied runtimes. Active configurations stay in the repository root.
 
 The installer marks available requirements in green, missing requirements in
@@ -55,9 +55,11 @@ never installs OS packages itself. Colors are disabled for redirected output
 and `NO_COLOR`.
 
 On Linux, Windows, macOS and FreeBSD, a system dependency section appears above
-the runtime list during install and update. It includes native library checks for
-SHOUTcast and Liquidsoap when their executables are available, and archive tools
-needed for installation. Source builds list each build tool and development library
+the runtime list during install and update. SHOUTcast and Liquidsoap have separate
+native library lists, showing both available and missing libraries. If an executable
+is not available yet, its native library check is marked `NOT CHECKED` until the
+executable is downloaded or supplied. Archive tools are listed separately from
+runtime libraries. Source builds list each build tool and development library
 separately, including the detected version and the FFmpeg minimum version check.
 Missing libraries include package installation commands where a mapping is known,
 shown in yellow below the system dependency list. Libraries installed outside
@@ -66,6 +68,13 @@ do not require the source-build tools; the Windows package also includes FFmpeg.
 The checks do not install system packages.
 For a first installation, native libraries are checked again after extraction,
 before activating the new executable.
+
+On Linux, macOS and FreeBSD, install and update build the newest stable FFmpeg
+release supported by Liquidsoap in `bin/ffmpeg/<os>-<arch>/`. Sources come from
+ffmpeg.org and must pass signature verification against the upstream release key.
+The system FFmpeg is left unchanged. Repeating installation reuses a validated
+local build when its version is current. Windows uses the FFmpeg libraries already
+included in the local official Liquidsoap package; no separate Unix build is needed.
 
 ### Initial configuration
 
@@ -111,12 +120,30 @@ On macOS and FreeBSD, supply a compatible licensed SHOUTcast executable.
 When no matching binary exists for the latest Liquidsoap release, the installer
 uses [OPAM](https://www.liquidsoap.info/doc-2.4.5/install#install-using-opam)
 to compile that exact version from the official release sources. Install OPAM 2.1 or newer,
-a C compiler, make (`gmake` on FreeBSD), `pkg-config`, and development libraries
-for FFmpeg 7 or newer, curl and libffi first. Older distributions may need newer
-FFmpeg libraries in a separate prefix, exposed through `PKG_CONFIG_PATH` and
-the runtime library search path. Keep that environment in the service manager.
-Further build prerequisites are reported by OPAM. FFmpeg on `PATH` alone does
-not provide the development libraries.
+a C compiler, make (`gmake` on FreeBSD), `pkg-config`, and development files for
+curl and libffi first. Local FFmpeg compilation also needs GnuPG, tar, xz, NASM on
+Intel CPUs, and development files for LAME, OpenSSL and zlib. The installer lists
+missing requirements and the appropriate OS package commands before building.
+`-dev` and `-devel` packages contain compilation headers for released libraries;
+they are not nightly builds.
+
+FFmpeg's own headers and libraries are installed locally. Ubuntu 22.04 can keep
+its system FFmpeg 4.x: source-built Liquidsoap uses the compatible local FFmpeg
+instead. Its launcher sets the required library paths, including when started by
+a service manager. Official precompiled or externally supplied Liquidsoap binaries
+still require the library versions they were built against.
+
+To remove FFmpeg development packages installed by an earlier setup on Ubuntu,
+first preview APT's removal plan:
+
+```bash
+sudo apt-get -s remove libavutil-dev libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev libswresample-dev libswscale-dev
+```
+
+If the plan does not remove anything else you need, repeat without `-s`.
+Do not remove the curl, libffi, LAME, OpenSSL or zlib development packages needed
+for future builds. No `autoremove` is needed. Runtime FFmpeg libraries and the
+system `ffmpeg` package can remain installed.
 
 Builds run as the service account in a private `bin/liquidsoap/opam` root, not
 the account's existing OPAM switches. They require additional time and disk
@@ -124,6 +151,9 @@ space. Checksums remain enabled; system packages are never installed by the
 controller. A failed build leaves the previous active runtime in place.
 Keep the repository at the same absolute path after a source build; rebuild
 Liquidsoap if it is moved. Do not run OPAM as root.
+FFmpeg builds use permanent versioned prefixes because Liquidsoap may still link
+to an older one. Do not delete those prefixes while they are in use. Unix source
+builds require a project path without spaces or shell-special characters.
 
 For a POSIX shell:
 

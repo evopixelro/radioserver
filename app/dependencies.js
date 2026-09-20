@@ -8,6 +8,7 @@ const platform = require("./platform");
 const liquidsoapRuntime = require("./liquidsoap-runtime");
 const releases = require("./liquidsoap-releases");
 const opam = require("./liquidsoap-opam");
+const ffmpegRuntime = require("./ffmpeg-runtime");
 const systemDependencies = require("./system-dependencies");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const { cleanupRuntimeDirectory, renameRuntimeDirectory } = require("./runtime-cleanup");
@@ -190,14 +191,16 @@ function getDependencyStatus({
     const runtimeCheck = liquidsoap.found
         ? validate(liquidsoap.path)
         : { ok: liquidsoap.found, detail: "not found" };
-    const nativeLibraries = liquidsoap.found
-        ? inspect(liquidsoap.path, runtimeProfile, { detail: runtimeCheck.detail }) : null;
+    const native = liquidsoap.found ? liquidsoapRuntime.getNativeRuntime(liquidsoap.path, runtimeProfile) : null;
+    const nativeLibraries = native
+        ? inspect(native.binary, runtimeProfile, { detail: runtimeCheck.detail, environment: native.environment }) : null;
     if (nativeLibraries?.missing.length && runtimeProfile.family === "linux") {
         nativeLibraries.debianDepends = cachedDebianDepends(serverRoot, runtimeProfile);
     }
+    const localFfmpeg = ffmpegRuntime.resolve(serverRoot, runtimeProfile);
     const ffmpegFound = runtimeProfile.family === "windows"
         ? runtimeCheck.ok
-        : commandExists("ffmpeg", ["-version"]);
+        : localFfmpeg ? ffmpegRuntime.validate(localFfmpeg, runtimeProfile) : commandExists("ffmpeg", ["-version"]);
     const items = [
         {
             id: "liquidsoap",
@@ -212,7 +215,7 @@ function getDependencyStatus({
             found: ffmpegFound,
             detail: runtimeProfile.family === "windows"
                 ? "bundled with Liquidsoap"
-                : ffmpegFound
+                : localFfmpeg ? `${localFfmpeg.binary}${ffmpegFound ? "" : " (validation failed)"}` : ffmpegFound
                     ? "available on PATH"
                     : "not found",
         },
@@ -240,6 +243,7 @@ function preflightInstall({
     debianFamily,
     dependencyStatus,
     osRelease: releaseInfo,
+    managedFfmpeg = false,
 } = {}) {
     const profile = runtimeProfile || platform.resolveProfile();
     const existing = existingBinary || platform.resolveLiquidsoapBinary(serverRoot, profile);
@@ -258,7 +262,7 @@ function preflightInstall({
         debianDepends: nativeLibraries?.debianDepends,
         distribution: debianFamily ? "debian" : systemDependencies.linuxDistribution(),
     });
-    if (profile.family !== "windows" && status.missing.includes("ffmpeg")) {
+    if (!managedFfmpeg && profile.family !== "windows" && status.missing.includes("ffmpeg")) {
         const distribution = debianFamily ? "debian" : systemDependencies.linuxDistribution();
         throw new Error(`Required OS dependency is missing: FFmpeg\n${systemDependencies.installationHelp(profile, { ffmpeg: true, distribution })}`);
     }
@@ -400,17 +404,20 @@ function cachedDebianDepends(serverRoot, profile) {
     } catch { return ""; }
 }
 
-async function installDependencies({ force = false, serverRoot = path.resolve(__dirname, ".."), plan } = {}) {
+async function installDependencies({ force = false, serverRoot = path.resolve(__dirname, ".."), plan, ffmpeg } = {}) {
     const selected = plan || await prepareInstall({ force, serverRoot });
     const { runtimeProfile, version, packageInfo } = selected;
     console.log(`Latest stable official Liquidsoap: ${version}.`);
-    if (selected.strategy === "external") {
+    const previous = readRuntimeManifest(path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "runtime.json"));
+    const rebindFfmpeg = ffmpeg && previous.method === "opam" && previous.ffmpegPrefix !== ffmpeg.prefix &&
+        selected.binary === path.join(serverRoot, "bin", "liquidsoap", runtimeProfile.id, "liquidsoap");
+    if (selected.strategy === "external" && !rebindFfmpeg) {
         console.log(`Verified Liquidsoap ${version}; external runtime was not modified: ${selected.binary}`);
         return selected.binary;
     }
-    if (selected.strategy === "source") {
+    if (selected.strategy === "source" || rebindFfmpeg) {
         console.log(`No official ${version} binary matches ${runtimeProfile.id}; building official sources in bin/liquidsoap with OPAM.`);
-        return opam.install(serverRoot, runtimeProfile, version, { activate: activateRuntime });
+        return opam.install(serverRoot, runtimeProfile, version, { activate: activateRuntime, ffmpeg });
     }
     if (runtimeProfile.family === "windows") return installWindowsLiquidsoap(serverRoot, runtimeProfile, { force, packageInfo });
     const existing = platform.resolveLiquidsoapBinary(serverRoot, runtimeProfile);

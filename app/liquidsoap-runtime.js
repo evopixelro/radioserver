@@ -1,6 +1,24 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { readRuntimeManifest } = require("./runtime-manifest");
+const ffmpegRuntime = require("./ffmpeg-runtime");
+
+function getNativeRuntime(binary, profile) {
+    if (!profile.id || !path.isAbsolute(binary)) return { binary, environment: process.env };
+    const root = path.dirname(binary);
+    const serverRoot = path.resolve(root, "..", "..", "..");
+    const manifest = readRuntimeManifest(path.join(root, "runtime.json"));
+    const opamRoot = path.join(serverRoot, "bin", "liquidsoap", "opam");
+    const builds = path.join(serverRoot, "bin", "ffmpeg", profile.id, "builds");
+    if (manifest.method !== "opam" || manifest.root !== opamRoot || typeof manifest.ffmpegPrefix !== "string" ||
+            path.dirname(manifest.ffmpegPrefix) !== builds ||
+            !new RegExp(`^${profile.id}-\\d+\\.\\d+\\.\\d+-[a-f0-9-]{36}$`).test(manifest.switch || "")) {
+        return { binary, environment: process.env };
+    }
+    return { binary: path.join(opamRoot, manifest.switch, "bin", "liquidsoap"),
+        environment: ffmpegRuntime.environment({ prefix: manifest.ffmpegPrefix }, profile) };
+}
 
 function getResources(binary) {
     if (!path.isAbsolute(binary)) return null;
@@ -55,4 +73,4 @@ function checkVersion(binary, expected, run = spawnSync) {
     return version;
 }
 
-module.exports = { checkRuntime, checkVersion, getArguments, getResources };
+module.exports = { checkRuntime, checkVersion, getArguments, getNativeRuntime, getResources };

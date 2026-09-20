@@ -5,13 +5,14 @@ const { spawnSync } = require("node:child_process");
 const runtime = require("./liquidsoap-runtime");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const { cleanupRuntimeDirectory } = require("./runtime-cleanup");
+const ffmpegRuntime = require("./ffmpeg-runtime");
 
-function inspectPrerequisites(profile, { run = spawnSync, userId = process.getuid?.() } = {}) {
+function inspectPrerequisites(profile, { run = spawnSync, userId = process.getuid?.(), managedFfmpeg = false, environment = process.env } = {}) {
     if (!["linux", "macos", "freebsd"].includes(profile.family)) {
         return { items: [], error: `No supported source build is available for ${profile.id}. Use an official compatible Liquidsoap binary.` };
     }
     const probe = (command, args) => run(command, args, {
-        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true,
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000, windowsHide: true, env: environment,
     });
     const succeeded = (result) => !result.error && result.status === 0;
     const items = ["opam", "pkg-config", "cc", profile.family === "freebsd" ? "gmake" : "make"].map((command) => {
@@ -40,7 +41,7 @@ function inspectPrerequisites(profile, { run = spawnSync, userId = process.getui
         opam.detail = `${opamVersion}; OPAM 2.1 or newer is required`;
     }
     const pkgConfig = items.find((item) => item.id === "pkg-config").found;
-    const libraries = ["libavutil", "libavformat", "libavcodec", "libavdevice", "libavfilter", "libswresample", "libswscale", "libcurl", "libffi"];
+    const libraries = [...(managedFfmpeg ? [] : ["libavutil", "libavformat", "libavcodec", "libavdevice", "libavfilter", "libswresample", "libswscale"]), "libcurl", "libffi"];
     const missingLibraries = [];
     let oldFfmpeg = false;
     for (const library of libraries) {
@@ -84,8 +85,10 @@ function install(serverRoot, profile, version, {
     verify = runtime.checkVersion,
     activate,
     userId = process.getuid?.(),
+    ffmpeg,
 } = {}) {
-    prerequisites(profile, { run, userId });
+    const buildEnvironment = ffmpegRuntime.environment(ffmpeg, profile);
+    prerequisites(profile, { run, userId, environment: buildEnvironment });
     if (!/^\d+\.\d+\.\d+$/.test(version) || !/^(linux|macos|freebsd)-(x64|x86|arm64|arm)$/.test(profile.id)) {
         throw new Error("Invalid Liquidsoap source build target.");
     }
@@ -96,7 +99,7 @@ function install(serverRoot, profile, version, {
     const switchName = `${profile.id}-${version}-${randomUUID()}`;
     const binary = path.join(opamRoot, switchName, "bin", "liquidsoap");
     // A private root leaves the user's OPAM switches, shell setup and system packages alone.
-    const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPAM")));
+    const environment = Object.fromEntries(Object.entries(buildEnvironment).filter(([key]) => !key.startsWith("OPAM")));
     Object.assign(environment, { OPAMROOT: opamRoot, OPAMYES: "1", OPAMREQUIRECHECKSUMS: "1" });
     const command = (args, required = true) => {
         const result = run("opam", [...args, `--root=${opamRoot}`], {
@@ -121,14 +124,25 @@ function install(serverRoot, profile, version, {
         command(["switch", "create", switchName, "--empty", "--no-switch", "--yes"]);
         command(["install", `--switch=${switchName}`, "--yes", "--no-depexts", "--require-checksums", "--jobs=2",
             "ocaml-base-compiler", "ffmpeg", `liquidsoap.${version}`]);
-        const check = validate(binary);
+        const runBuilt = (executable, args, options) => run(executable, args, { ...options, env: environment });
+        const check = validate(binary, runBuilt);
         if (!check.ok) throw new Error(`The compiled Liquidsoap runtime failed validation: ${check.detail}`);
-        verify(binary, version);
+        verify(binary, version, runBuilt);
         // OPAM embeds its prefix in compiled files. Keep the switch in place and activate a link.
-        fs.symlinkSync(binary, path.join(staging, "liquidsoap"));
+        if (ffmpeg) {
+            const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+            const libraryPath = profile.family === "macos" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
+            const launcher = `#!/bin/sh\nexport PATH=${quote(path.join(ffmpeg.prefix, "bin"))}:"$PATH"\n` +
+                `export ${libraryPath}=${quote(path.join(ffmpeg.prefix, "lib"))}\${${libraryPath}:+:\"$${libraryPath}\"}\n` +
+                `exec ${quote(binary)} "$@"\n`;
+            fs.writeFileSync(path.join(staging, "liquidsoap"), launcher, { mode: 0o755 });
+        } else {
+            fs.symlinkSync(binary, path.join(staging, "liquidsoap"));
+        }
         fs.writeFileSync(path.join(staging, "runtime.json"), `${JSON.stringify({
             method: "opam", version, switch: switchName, root: opamRoot,
             repository: "https://opam.ocaml.org",
+            ...(ffmpeg ? { ffmpegPrefix: ffmpeg.prefix, ffmpegVersion: ffmpeg.version } : {}),
         }, null, 2)}\n`, { mode: 0o640 });
         activate(staging, runtimeRoot);
         activated = true;

@@ -81,6 +81,23 @@ test("upstream lookup errors do not fall back to the installed version", async (
     await assert.rejects(dependencies.prepareInstall(options), /HTTP 503/);
 });
 
+test("updating local FFmpeg rebuilds a managed OPAM runtime but preserves explicit external binaries", async (context) => {
+    const options = fixture(context);
+    const root = path.join(options.serverRoot, "bin", "liquidsoap", options.runtimeProfile.id);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, "runtime.json"), JSON.stringify({ method: "opam", ffmpegPrefix: "/previous" }));
+    const local = { version: "8.1.2", prefix: "/new-ffmpeg" };
+    const install = context.mock.method(opam, "install", (_root, _profile, _version, settings) => {
+        assert.equal(settings.ffmpeg, local);
+        return "rebuilt";
+    });
+    const plan = { runtimeProfile: options.runtimeProfile, version: "2.4.5", strategy: "external", binary: path.join(root, "liquidsoap") };
+    assert.equal(await dependencies.installDependencies({ serverRoot: options.serverRoot, plan, ffmpeg: local }), "rebuilt");
+    assert.equal(install.mock.callCount(), 1);
+    assert.equal(await dependencies.installDependencies({ serverRoot: options.serverRoot, plan: { ...plan, binary: "/external/liquidsoap" }, ffmpeg: local }), "/external/liquidsoap");
+    assert.equal(install.mock.callCount(), 1);
+});
+
 test("checks the installed executable version rather than trusting a manifest", () => {
     const run = (text) => () => ({ status: 0, stdout: text });
     for (const output of ["Liquidsoap 2.4.5", "Liquidsoap 2.4.5+dev"]) {

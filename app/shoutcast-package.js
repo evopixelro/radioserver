@@ -129,7 +129,9 @@ function installLinuxPackage(packageInfo, serverRoot, runtimeProfile) {
             throw new Error(`SHOUTcast archive did not contain the expected executable: ${binaryPath}`);
         }
         fs.chmodSync(binaryPath, 0o755);
-        systemDependencies.assertAvailable("SHOUTcast", runtimeProfile, systemDependencies.inspect(binaryPath, runtimeProfile));
+        const libraries = systemDependencies.inspect(binaryPath, runtimeProfile);
+        systemDependencies.printStatus("SHOUTcast", libraries);
+        systemDependencies.assertAvailable("SHOUTcast", runtimeProfile, libraries);
         const backup = `${staging}-previous`;
         const existed = fs.existsSync(installDirectory);
         if (existed) renameRuntimeDirectory(installDirectory, backup);
@@ -163,7 +165,9 @@ function installWindowsPackage(packageInfo, serverRoot, runtimeProfile) {
     if (!binary.found) {
         throw new Error("Installation completed, but sc_serv.exe was not found; set SC_SERV_BIN.");
     }
-    systemDependencies.assertAvailable("SHOUTcast", runtimeProfile, systemDependencies.inspect(binary.path, runtimeProfile));
+    const libraries = systemDependencies.inspect(binary.path, runtimeProfile);
+    systemDependencies.printStatus("SHOUTcast", libraries);
+    systemDependencies.assertAvailable("SHOUTcast", runtimeProfile, libraries);
     console.log(`SHOUTcast executable detected: ${binary.path}`);
     return binary.path;
 }

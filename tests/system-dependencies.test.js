@@ -31,6 +31,25 @@ test("unknown source distributions get instructions without invented package com
     assert.doesNotMatch(help, /apt-get|dnf|pacman|brew|sudo/);
 });
 
+for (const [family, distribution, command] of [
+    ["linux", "ubuntu", "sudo apt-get install"], ["linux", "debian", "sudo apt-get install"],
+    ["linux", "fedora", "sudo dnf install"], ["linux", "arch", "sudo pacman -S --needed"],
+    ["macos", "", "brew install"], ["freebsd", "", "pkg install"],
+]) {
+    test(`${family}/${distribution}: managed FFmpeg help selects OS commands without installing system FFmpeg`, () => {
+        const profile = { family, architecture: "x64" };
+        const help = native.ffmpegInstallationHelp(profile, { distribution, color: true });
+        assert.ok(help.includes(`\u001b[33m${command}`));
+        assert.match(help, /gnupg/);
+        assert.match(help, /nasm/);
+        assert.match(help, /lame/);
+        assert.doesNotMatch(help, /libav\w+-dev|sudo brew/);
+        const source = native.sourceInstallationHelp(profile, { distribution, managedFfmpeg: true, color: false });
+        assert.doesNotMatch(source, /libav\w+-dev|'pkgconfig\(libav|install .+ ffmpeg/);
+        assert.match(source, /OS FFmpeg development packages are not required/);
+    });
+}
+
 test("SHOUTcast extraction hints include only known packages and color commands yellow", () => {
     for (const [distribution, command] of [["debian", "sudo apt-get install tar gzip"], ["fedora", "sudo dnf install tar gzip"], ["arch", "sudo pacman -S --needed tar gzip"]]) {
         const help = native.archiveInstallationHelp({ family: "linux" }, ["tar", "gzip", "arbitrary;command"], { distribution, color: true });
@@ -57,6 +76,30 @@ test("ldd reports missing libraries separately from resolved dependencies", () =
     assert.deepEqual(report.missing, ["libtag.so.1", "libmad.so.0"]);
     assert.equal(report.libraries[1].found, true);
     assert.equal(native.statusItems("AutoDJ", report).length, 2);
+    const detailed = native.statusItems("AutoDJ", report, { includeFound: true });
+    assert.equal(detailed.length, 3);
+    assert.equal(detailed.find((item) => item.label === "AutoDJ library (libc.so.6)").found, true);
+});
+
+test("SHOUTcast glibc libraries map to one Ubuntu package with matching architecture", () => {
+    const missing = ["libpthread.so.0", "librt.so.1", "libdl.so.2", "libm.so.6", "libc.so.6", "ld-linux-x86-64.so.2"];
+    const help = native.installationHelp({ family: "linux", architecture: "x64" }, { distribution: "ubuntu", missing, color: true });
+    assert.ok(help.includes("\u001b[33msudo apt-get install libc6\u001b[0m"));
+    assert.equal((help.match(/libc6/g) || []).length, 1);
+    assert.doesNotMatch(help, /No verified package mapping/);
+    const x86 = native.installationHelp({ family: "linux", architecture: "x86" }, {
+        distribution: "ubuntu", missing: ["ld-linux.so.2", "libm.so.6", "libc.so.6"], color: false,
+    });
+    assert.match(x86, /sudo apt-get install libc6:i386\n/);
+    assert.equal((x86.match(/libc6:i386/g) || []).length, 1);
+});
+
+test("detailed native reports preserve missing libraries absent from the parsed list", () => {
+    const report = { checked: true, libraries: [{ name: "libc.so.6", found: true }], missing: ["libc.so.6", "libm.so.6"], abiError: true };
+    const items = native.statusItems("SHOUTcast", report, { includeFound: true });
+    assert.equal(items.length, 3);
+    assert.ok(items.every((item) => !item.found));
+    assert.equal(items.filter((item) => item.label === "SHOUTcast library (libc.so.6)").length, 1);
 });
 
 test("missing TagLib stops Linux preflight before downloads and requests only OS packages", () => {

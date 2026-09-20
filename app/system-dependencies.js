@@ -119,7 +119,7 @@ function inspect(binary, profile, {
     let architecture = profile.architecture;
     let diagnostic = "";
     if (["linux", "freebsd"].includes(profile.family)) {
-        const result = run("ldd", [binary], PROBE_OPTIONS);
+        const result = run("ldd", [binary], { ...PROBE_OPTIONS, env: { ...environment, LC_ALL: "C" } });
         diagnostic = `${result.error?.message || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.trim();
         libraries = parseLdd(diagnostic);
         checked = !result.error && (result.status === 0 || libraries.length > 0);
@@ -192,11 +192,12 @@ function inspect(binary, profile, {
     return { checked, architecture, libraries, missing: libraries.filter((item) => !item.found).map((item) => item.name), abiError, inspectionError };
 }
 
-function statusItems(label, report) {
+function statusItems(label, report, { includeFound = false } = {}) {
     if (!report) return [];
-    const items = report.missing.map((name) => ({
-        id: `native:${label}:${name}`, label: `${label} library (${name})`, found: false,
-        detail: "required by the executable, not available to the OS loader",
+    const names = includeFound ? [...new Set([...report.libraries.map((item) => item.name), ...report.missing])] : report.missing;
+    const items = names.map((name) => ({
+        id: `native:${label}:${name}`, label: `${label} library (${name})`, found: !report.missing.includes(name),
+        detail: report.missing.includes(name) ? "required by the executable, not available to the OS loader" : "available to the OS loader",
     }));
     if (report.abiError) items.push({ id: `abi:${label}`, label: `${label} OS compatibility`, found: false, detail: "incompatible library version or architecture" });
     if (report.inspectionError) items.push({ id: `inspection:${label}`, label: `${label} native inspection`, found: false, detail: report.inspectionError });
@@ -205,6 +206,21 @@ function statusItems(label, report) {
         detail: `${report.libraries.length} direct/resolved dependencies checked`,
     });
     return items;
+}
+
+function printStatus(label, report, {
+    color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
+} = {}) {
+    console.log(`  ${label} native libraries:`);
+    if (!report) {
+        console.log(`    NOT CHECKED: ${label} executable is not available; libraries will be checked after extraction or installation.`);
+        return;
+    }
+    for (const item of statusItems(label, report, { includeFound: true })) {
+        const marker = item.found ? "FOUND" : "MISSING";
+        const rendered = color ? `\u001b[${item.found ? 32 : 31}m${marker}\u001b[0m` : marker;
+        console.log(`    ${rendered} ${item.label}: ${item.detail}`);
+    }
 }
 
 function quote(value) {
@@ -227,11 +243,16 @@ function installationHelp(profile, {
         } else {
             const packages = [];
             if (ffmpeg) packages.push("ffmpeg");
-            const known = { "libtag.so.1": "libtag1v5", "libc.so.6": "libc6", "libstdc++.so.6": "libstdc++6", "libgcc_s.so.1": "libgcc-s1", "libz.so.1": "zlib1g" };
+            const known = {
+                "libtag.so.1": "libtag1v5", "libc.so.6": "libc6", "libm.so.6": "libc6",
+                "libpthread.so.0": "libc6", "librt.so.1": "libc6", "libdl.so.2": "libc6",
+                "ld-linux-x86-64.so.2": "libc6", "ld-linux.so.2": "libc6",
+                "libstdc++.so.6": "libstdc++6", "libgcc_s.so.1": "libgcc-s1", "libz.so.1": "zlib1g",
+            };
             for (const name of names) {
                 if (Object.hasOwn(known, name)) packages.push(`${known[name]}${profile.architecture === "x86" ? ":i386" : ""}`);
             }
-            if (packages.length) commands.push(`sudo apt-get install ${packages.join(" ")}`);
+            if (packages.length) commands.push(`sudo apt-get install ${[...new Set(packages)].join(" ")}`);
             if (profile.architecture === "x86" && packages.length) notes.push("The i386 architecture must be enabled in APT when installing 32-bit libraries on a 64-bit host");
             const unknown = names.filter((name) => !Object.hasOwn(known, name));
             if (unknown.length) notes.push(`No verified package mapping for: ${unknown.join(", ")}. Use the matching vendor package's Depends field, not a package from another OS release`);
@@ -284,7 +305,7 @@ function archiveInstallationHelp(profile, missing, {
 }
 
 function sourceInstallationHelp(profile, {
-    distribution = linuxDistribution(), color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
+    distribution = linuxDistribution(), color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env), managedFfmpeg = false,
 } = {}) {
     let command = "";
     if (profile.family === "linux" && ["debian", "ubuntu"].includes(distribution)) {
@@ -299,15 +320,46 @@ function sourceInstallationHelp(profile, {
     } else if (profile.family === "freebsd") {
         command = "pkg install ocaml-opam gmake pkgconf m4 rsync git unzip ffmpeg curl libffi libsysinfo ca_root_nss";
     }
-    const lines = command ? ["Suggested build dependencies (run separately):", color ? `\u001b[33m${command}\u001b[0m` : command] :
+    if (managedFfmpeg) {
+        command = command.replace(/\s+lib(?:avutil|avformat|avcodec|avdevice|avfilter|swresample|swscale)-dev\b/g, "")
+            .replace(/\s+'pkgconfig\(lib(?:avutil|avformat|avcodec|avdevice|avfilter|swresample|swscale)\)'/g, "")
+            .replace(/\s+ffmpeg\b/g, "");
+    }
+    const lines = command ? ["Suggested Liquidsoap build dependencies (run separately):", color ? `\u001b[33m${command}\u001b[0m` : command] :
         ["No verified package command for this distribution. Install OPAM >= 2.1, a C compiler, make, pkg-config and the development libraries listed above."];
     lines.push("Packages must be available in your configured repositories; RadioServer does not install OS packages or enable repositories.");
-    lines.push("Older OS releases may only provide FFmpeg < 7. Installing their -dev packages alone is not sufficient; use compatible FFmpeg >= 7 libraries.");
-    lines.push("If the libraries are already installed in a custom prefix, expose their .pc files through PKG_CONFIG_PATH and configure the runtime library search path.");
+    if (managedFfmpeg) lines.push("FFmpeg and its development files are built locally in bin/ffmpeg; OS FFmpeg development packages are not required.");
+    else {
+        lines.push("Older OS releases may only provide FFmpeg < 7. Installing their -dev packages alone is not sufficient; use compatible FFmpeg >= 7 libraries.");
+        lines.push("If the libraries are already installed in a custom prefix, expose their .pc files through PKG_CONFIG_PATH and configure the runtime library search path.");
+    }
     if (profile.family === "macos") lines.push("Install Xcode Command Line Tools for the C compiler and make. Run Homebrew without sudo.");
     if (profile.family === "freebsd") lines.push("Run pkg as root; only OS package installation needs system privileges.");
     lines.push("OPAM can report additional build dependencies. Rerun npm run install or npm run update as the service account, not root.");
     return lines.join("\n");
+}
+
+function ffmpegInstallationHelp(profile, {
+    distribution = linuxDistribution(), color = Boolean(process.stdout.isTTY) && !("NO_COLOR" in process.env),
+} = {}) {
+    const assembler = ["x64", "x86"].includes(profile.architecture) ? " nasm" : "";
+    let command = "";
+    if (profile.family === "linux" && ["ubuntu", "debian"].includes(distribution)) {
+        command = `sudo apt-get install build-essential pkg-config tar xz-utils gnupg${assembler} libmp3lame-dev libssl-dev zlib1g-dev`;
+    } else if (profile.family === "linux" && ["fedora", "rhel", "rocky", "almalinux", "centos"].includes(distribution)) {
+        command = `sudo dnf install gcc make pkgconf-pkg-config tar xz gnupg2${assembler} lame-devel openssl-devel zlib-devel`;
+    } else if (profile.family === "linux" && distribution === "arch") {
+        command = `sudo pacman -S --needed base-devel pkgconf tar xz gnupg${assembler} lame openssl zlib`;
+    } else if (profile.family === "macos") {
+        command = `brew install pkg-config xz gnupg${assembler} lame openssl@3 zlib`;
+    } else if (profile.family === "freebsd") {
+        command = `pkg install gmake pkgconf gtar xz gnupg${assembler} lame openssl`;
+    }
+    return ["Suggested FFmpeg build dependencies (run separately):",
+        command ? color ? `\u001b[33m${command}\u001b[0m` : command : "No verified package command is available for this OS; install the tools and libraries listed above.",
+        "These -dev/-devel packages contain stable compilation headers, not nightly versions. No OS packages are installed automatically.",
+        ...(profile.family === "macos" ? ["Xcode Command Line Tools are required. Expose keg-only OpenSSL and zlib through PKG_CONFIG_PATH; run Homebrew without sudo."] : []),
+    ].join("\n");
 }
 
 function assertAvailable(label, profile, report, options = {}) {
@@ -323,4 +375,4 @@ function assertAvailable(label, profile, report, options = {}) {
     throw error;
 }
 
-module.exports = { archiveInstallationHelp, assertAvailable, inspect, installationHelp, linuxDistribution, missingFromError, parseLdd, sourceInstallationHelp, statusItems, windowsImports };
+module.exports = { archiveInstallationHelp, assertAvailable, ffmpegInstallationHelp, inspect, installationHelp, linuxDistribution, missingFromError, parseLdd, printStatus, sourceInstallationHelp, statusItems, windowsImports };
