@@ -28,7 +28,7 @@ function optionsFrom(args) {
 
 function info(file) {
     try { return fs.lstatSync(file); }
-    catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; }
 }
 
 function target(root, relative) {

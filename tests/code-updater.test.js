@@ -66,6 +66,24 @@ test("FTP code update reports every change and preserves active configs, data an
     assert.equal(fs.existsSync(path.join(f.root, ".git")), false);
 });
 
+test("a legacy binary does not break canonical checks for a missing managed runtime", async (t) => {
+    const f = fixture(t);
+    f.write("bin/liquidsoap", "legacy runtime");
+    const auto = autodj.getConfig(f.root);
+    const candidate = path.join(f.root, "bin", "liquidsoap", "freebsd-x64", "liquidsoap");
+    t.mock.method(autodj, "getConfig", () => ({ ...auto, binaryPath: candidate }));
+    const lstat = fs.lstatSync;
+    t.mock.method(fs, "lstatSync", (file, ...args) => {
+        if (String(file).startsWith(`${path.join(f.root, "bin", "liquidsoap")}${path.sep}`)) {
+            throw Object.assign(new Error("Not a directory"), { code: "ENOTDIR" });
+        }
+        return lstat(file, ...args);
+    });
+    const result = await f.run(snapshot());
+    assert.ok(result.added > 0);
+    assert.equal(f.read("bin/liquidsoap"), "legacy runtime");
+});
+
 test("repeated update skips unchanged files without rewriting their timestamps", async (t) => {
     const f = fixture(t);
     await f.run(snapshot());
