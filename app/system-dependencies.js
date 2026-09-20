@@ -353,12 +353,13 @@ function ffmpegInstallationHelp(profile, {
     } else if (profile.family === "macos") {
         command = `brew install pkg-config xz gnupg${assembler} lame openssl@3 zlib`;
     } else if (profile.family === "freebsd") {
-        command = `pkg install gmake pkgconf gtar xz gnupg${assembler} lame openssl`;
+        command = `pkg install gmake pkgconf gnupg${assembler} lame openssl`;
     }
     return ["Suggested FFmpeg build dependencies (run separately):",
         command ? color ? `\u001b[33m${command}\u001b[0m` : command : "No verified package command is available for this OS; install the tools and libraries listed above.",
         "These -dev/-devel packages contain stable compilation headers, not nightly versions. No OS packages are installed automatically.",
         ...(profile.family === "macos" ? ["Xcode Command Line Tools are required. Expose keg-only OpenSSL and zlib through PKG_CONFIG_PATH; run Homebrew without sudo."] : []),
+        ...(profile.family === "freebsd" ? ["The C compiler, tar, xz and zlib development files are provided by the FreeBSD base system."] : []),
     ].join("\n");
 }
 

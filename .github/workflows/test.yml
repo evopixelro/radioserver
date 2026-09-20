@@ -95,7 +95,7 @@ jobs:
           cpu: 2
           copyback: false
           prepare: |
-            pkg install -y node22 ocaml-opam curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl gtar xz
+            pkg install -y node22 ocaml-opam curl pkgconf gmake git rsync m4 unzip libffi libsysinfo ca_root_nss gnupg nasm lame openssl
             pw useradd radio-test -m -s /bin/sh
           run: |
             set -eu

@@ -134,7 +134,7 @@ async function install(serverRoot, profile, plan, {
     let activated = false;
     const command = (executable, args, options = {}) => {
         const result = run(executable, args, { cwd: staging, stdio: "inherit", timeout: 3600000, ...options });
-        if (result.error || result.status !== 0) throw new Error(`Local FFmpeg build failed during ${path.basename(executable)}: ${result.error?.message || `exit ${result.status}`}. The previous runtime was not replaced.`);
+        if (result.error || result.status !== 0) throw new Error(`Local FFmpeg build failed during ${path.basename(executable)}: ${result.error?.message || String(result.stderr || `exit ${result.status}`).trim().slice(-2000)}. The previous runtime was not replaced.`);
         return result;
     };
     try {
@@ -148,14 +148,17 @@ async function install(serverRoot, profile, plan, {
         await fetchFile({ url: "https://ffmpeg.org/ffmpeg-devel.asc", filePath: key, maxBytes: 1024 * 1024 });
         const keyring = path.join(staging, "gnupg");
         fs.mkdirSync(keyring, { mode: 0o700 });
-        const gpg = ["--no-options", "--batch", "--no-auto-key-retrieve", "--homedir", keyring];
+        const gpg = ["--no-options", "--batch", "--no-autostart", "--no-auto-key-retrieve", "--homedir", keyring];
         const capture = { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 };
         const keys = command("gpg", [...gpg, "--with-colons", "--show-keys", key], capture).stdout || "";
         if ((keys.match(/^pub:/gm) || []).length !== 1 || keys.match(/^fpr:(?:[^:]*:){8}([A-F0-9]+):/m)?.[1] !== RELEASE_KEY) {
             throw new Error("The FFmpeg signing key does not match the pinned upstream fingerprint.");
         }
-        command("gpg", [...gpg, "--import", key], capture);
-        const verified = command("gpg", [...gpg, "--status-fd", "1", "--verify", signature, archive], capture).stdout || "";
+        // A public-key ring is sufficient for verification; no agent or trust import is needed.
+        const publicKeys = path.join(keyring, "release-key.gpg");
+        command("gpg", [...gpg, "--dearmor", "--output", publicKeys, key], capture);
+        const verified = command("gpg", [...gpg, "--no-default-keyring", "--keyring", publicKeys,
+            "--status-fd", "1", "--verify", signature, archive], capture).stdout || "";
         if (!verified.split(/\r?\n/).some((line) => line.startsWith("[GNUPG:] VALIDSIG ") &&
                 (line.split(" ")[2] === RELEASE_KEY || line.split(" ").at(-1) === RELEASE_KEY))) {
             throw new Error("The FFmpeg source signature could not be verified with the pinned upstream key.");

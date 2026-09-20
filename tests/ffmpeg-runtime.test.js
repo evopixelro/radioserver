@@ -92,6 +92,9 @@ test("managed FFmpeg verifies signatures before extraction and activates only a 
     const runtime = await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
     const verified = commands.findIndex(({ args }) => args.includes("--verify"));
     assert.ok(verified < commands.findIndex(({ command, args }) => command === "tar" && args[0] === "-xf"));
+    assert.equal(commands.some(({ args }) => args.includes("--import")), false);
+    assert.ok(commands[verified].args.includes("--no-autostart"));
+    assert.ok(commands[verified].args.includes("--no-default-keyring"));
     const configuration = commands.find(({ command }) => path.basename(command) === "configure");
     assert.ok(configuration.args.includes("--enable-libmp3lame"));
     assert.ok(configuration.args.includes("--enable-openssl"));
