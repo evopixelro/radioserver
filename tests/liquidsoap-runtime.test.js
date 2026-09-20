@@ -46,16 +46,31 @@ test("Liquidsoap accepts the generated output and evaluates nullable Unicode tit
         assert.ifError(result.error);
         assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
         // Newer runtimes type-check without evaluating top-level assertions
-        const definitionsEnd = script.indexOf("\ndef program_0_track(m) =");
+        const definitionsEnd = script.indexOf("\nprogram_0 = radio_program(");
         assert.ok(definitionsEnd > 0);
         const assertionsPath = path.join(temporaryRoot, "assertions.liq");
-        fs.writeFileSync(assertionsPath, script.slice(0, definitionsEnd) + "\n" + checks + "exit(0)\n", "utf8");
+        const framingChecks = [
+            'print(newline=false, "[decoder:3] Partial log message")',
+            'program_0_track([("song", "Și tu — Музыка")])',
+            'print(newline=false, "remaining log text")',
+            'program_0_track([("song", "Second title")])',
+            'print("end of log")',
+        ].join("\n");
+        fs.writeFileSync(assertionsPath, script.slice(0, definitionsEnd) + "\n" + checks + framingChecks + "\nexit(0)\n", "utf8");
         const evaluated = spawnSync(binary, getArguments(binary, [assertionsPath]), {
             encoding: "utf8", timeout: 45000, cwd: temporaryRoot, windowsHide: true,
         });
         assert.ifError(evaluated.error);
         assert.equal(evaluated.status, 0, `${evaluated.stdout}\n${evaluated.stderr}`);
         assert.match(evaluated.stdout, /RADIO_RUNTIME_TEST_OK/);
+        const events = [];
+        const parser = createMetadataLogParser((title, streamId) => events.push({ title, streamId }));
+        parser.write(evaluated.stdout);
+        parser.end();
+        assert.deepEqual(events, [
+            { title: "Și tu — Музыка", streamId: 1 },
+            { title: "Second title", streamId: 1 },
+        ], evaluated.stdout);
     } finally {
         fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }

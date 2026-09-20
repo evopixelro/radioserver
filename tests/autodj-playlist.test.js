@@ -13,7 +13,7 @@ const binary = process.env.LIQUIDSOAP_TEST_BIN;
 test("real Liquidsoap prevents adjacent names across modes, weights, reloads and crossfades, with an unavailable-alternative exception", {
     skip: !binary && "Set LIQUIDSOAP_TEST_BIN to test real anti-repeat scheduling",
     timeout: 60000,
-}, async () => {
+}, async (context) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-anti-repeat-"));
     const histories = new Map();
     const wave = Buffer.alloc(44 + 44100 * 4);
@@ -73,7 +73,7 @@ test("real Liquidsoap prevents adjacent names across modes, weights, reloads and
         lines.push(`${variable} = radio_program(id=${JSON.stringify(entry.id)}, mode=${JSON.stringify(entry.mode)}, reload=1, [${entry.lists.map(([uri, weight]) => `{uri=${JSON.stringify(uri)}, weight=${weight}}`).join(", ")}])`);
         if (entry.crossfade) lines.push(`${variable} = crossfade(duration=0.1, ${variable})`);
         const callback = `${variable}.${entry.crossfade ? "on_metadata" : "on_track"}`;
-        const handler = `fun (m) -> print(newline=false, "[ANTI_REPEAT:${entry.id}] " ^ json.stringify(compact=true, m["song"]) ^ "\\n")`;
+        const handler = `fun (m) -> print(newline=false, "\\n[ANTI_REPEAT:${entry.id}] " ^ json.stringify(compact=true, m["song"]) ^ "\\n")`;
         lines.push("%ifversion >= 2.4", `${callback}(synchronous=true, ${handler})`, "%else", `${callback}(${handler})`, "%endif");
         lines.push(`output.dummy(fallible=true, ${variable})`);
     }
@@ -130,6 +130,9 @@ test("real Liquidsoap prevents adjacent names across modes, weights, reloads and
             assert.equal(output.split(`[${id}:2] No different playable filename`).length - 1, 1, output);
         }
         assert.equal(output.split("[invalid:2] No playable tracks").length - 1, 1, output);
+    } catch (error) {
+        context.diagnostic(output);
+        throw error;
     } finally {
         clearTimeout(timeout);
         if (child?.pid && child.exitCode === null) {

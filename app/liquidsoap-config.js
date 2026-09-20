@@ -426,8 +426,8 @@ function generateScript(config) {
         const { name, sources, outputs } = program;
         lines.push("", `def ${name}_track(m) =`, "  song = json.stringify(compact=true, radio_song(m))");
         for (const output of outputs) {
-            // print's implicit newline is a separate write that other clock threads can interrupt.
-            lines.push(`  print(newline=false, "[RADIO_METADATA:${output.streamId}] #{song}\\n")`);
+            // Frame both ends in one write: another clock may have left a partial log line.
+            lines.push(`  print(newline=false, "\\n[RADIO_METADATA:${output.streamId}] #{song}\\n")`);
         }
         lines.push("end");
 

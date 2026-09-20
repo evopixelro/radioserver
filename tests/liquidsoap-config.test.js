@@ -28,13 +28,13 @@ function createConfig(overrides = {}) {
     };
 }
 
-test("metadata records include their newline in the same Liquidsoap write", () => {
+test("metadata records include both line boundaries in the same Liquidsoap write", () => {
     const config = createConfig();
     config.outputs.push({ ...config.outputs[0], id: "second", streamId: 2 });
     const records = generateScript(config).split("\n").filter((line) => line.includes("print("));
     assert.deepEqual(records, [
-        '  print(newline=false, "[RADIO_METADATA:1] #{song}\\n")',
-        '  print(newline=false, "[RADIO_METADATA:2] #{song}\\n")',
+        '  print(newline=false, "\\n[RADIO_METADATA:1] #{song}\\n")',
+        '  print(newline=false, "\\n[RADIO_METADATA:2] #{song}\\n")',
     ]);
 });
 
@@ -121,7 +121,7 @@ test("uses the audio filename when artist and title tags are missing", () => {
     assert.match(script, /song = radio_song\(m\)/);
     assert.match(script, /def program_0_track\(m\) =/);
     assert.match(script, /json.stringify\(compact=true, radio_song\(m\)\)/);
-    assert.ok(script.includes('print(newline=false, "[RADIO_METADATA:1] #{song}\\n")'));
+    assert.ok(script.includes('print(newline=false, "\\n[RADIO_METADATA:1] #{song}\\n")'));
     assert.match(script, /\[\("title", song\)\]/);
     assert.match(
         script,

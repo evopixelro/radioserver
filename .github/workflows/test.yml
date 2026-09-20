@@ -66,6 +66,13 @@ jobs:
           node -e 'const {execFileSync}=require("node:child_process"); const {parseVersion,versionIsSupported}=require("./app/autodj-manager"); const output=execFileSync(process.env.LIQUIDSOAP_TEST_BIN,["--version"],{encoding:"utf8"}); console.log(output); const version=parseVersion(output); if(!version || !versionIsSupported(version,[2,4,5])) process.exit(1);'
       - name: Run tests
         run: node --test --test-reporter=tap
+      - name: Repeat native playback regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in 1 2; do
+            node --test --test-reporter=tap tests/autodj-playlist.test.js tests/autodj-reconnect.test.js tests/playlist-schedule-runtime.test.js
+          done
 
   freebsd:
     name: Native / FreeBSD
@@ -97,4 +104,7 @@ jobs:
               export LIQUIDSOAP_TEST_BIN="$(opam var --switch=ci bin)/liquidsoap"
               "$LIQUIDSOAP_TEST_BIN" --version
               opam exec --switch=ci -- node --test --test-reporter=tap
+              for iteration in 1 2; do
+                opam exec --switch=ci -- node --test --test-reporter=tap tests/autodj-playlist.test.js tests/autodj-reconnect.test.js tests/playlist-schedule-runtime.test.js
+              done
             '

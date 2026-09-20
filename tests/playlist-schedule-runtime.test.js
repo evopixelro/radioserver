@@ -44,6 +44,7 @@ test("real Liquidsoap switches after the current track and respects weights, sch
     };
     let child;
     let timeout;
+    let output = "";
     try {
         const regular = writeList("regular", ["A", "B"]);
         const scheduled = writeList("scheduled", ["C", "D"]);
@@ -95,7 +96,7 @@ test("real Liquidsoap switches after the current track and respects weights, sch
             lines.push(`  schedule_time=${name}_clock, schedules=[${entry.lists.map((list) => list[2]).join(", ")}],`);
             lines.push(`  [${entry.lists.map(([uri, weight]) => `{uri=${JSON.stringify(uri)}, weight=${weight}}`).join(", ")}])`);
             lines.push(`def ${name}_track(m) =`);
-            lines.push(`  print(newline=false, "[SCHEDULE:${entry.id}] " ^ json.stringify(compact=true, {song=m["song"], audio_time=source.time(${name})}) ^ "\\n")`);
+            lines.push(`  print(newline=false, "\\n[SCHEDULE:${entry.id}] " ^ json.stringify(compact=true, {song=m["song"], audio_time=source.time(${name})}) ^ "\\n")`);
             lines.push(`  ref.incr(${name}_count)`);
             if (entry.id === "boundary") {
                 // Change the injected clock while the one-second track is still playing.
@@ -116,7 +117,6 @@ test("real Liquidsoap switches after the current track and respects weights, sch
         const script = path.join(root, "schedule.liq");
         fs.writeFileSync(script, `${lines.join("\n")}\n`);
         let pending = "";
-        let output = "";
         const times = [];
         await new Promise((resolve, reject) => {
             child = spawn(binary, getArguments(binary, [script]), {
@@ -164,6 +164,9 @@ test("real Liquidsoap switches after the current track and respects weights, sch
             assert.ok(duration >= 0.9,
                 `Scheduled transitions must preserve the one-second track: ${JSON.stringify(times)}`);
         }
+    } catch (error) {
+        context.diagnostic(output);
+        throw error;
     } finally {
         clearTimeout(timeout);
         if (child?.pid && child.exitCode === null) {
