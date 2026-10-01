@@ -104,8 +104,9 @@ function ensureDirectories(config) {
     fs.mkdirSync(config.logDirectory, { recursive: true, mode: 0o750 });
 }
 
-function checkScript(binary, scriptPath, password) {
+function checkScript(binary, scriptPath, password, environment) {
     const result = childProcess.spawnSync(binary, liquidsoapRuntime.getArguments(binary, ["--check", scriptPath]), {
+        env: environment,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30000,
@@ -143,6 +144,9 @@ function prepareRuntime(config, { validationOnly = false } = {}) {
     }, config.logPath);
     if (!validationOnly) ensureDirectories(config);
     const runtimeConfig = loadConfiguration(config);
+    const timezone = liquidsoapConfig.resolveScheduleTimezone(runtimeConfig.scheduleTimezone);
+    const environment = { ...process.env };
+    if (timezone !== "local" && (process.platform !== "win32" || timezone === "UTC")) environment.TZ = timezone;
     const playlist = generatePlaylist({ serverRoot: config.serverRoot, dryRun: true });
     const binary = findBinary(config, {
         scheduled: playlist.playlists.some((item) => item.schedule.length > 0 && runtimeConfig.outputs.some((output) =>
@@ -165,7 +169,7 @@ function prepareRuntime(config, { validationOnly = false } = {}) {
         const script = liquidsoapConfig.generateScript(preparedConfig);
         const scriptPath = path.join(temporary, "autodj.liq");
         liquidsoapConfig.writeScript(scriptPath, script);
-        checkScript(binary, scriptPath, runtimeConfig.server.password);
+        checkScript(binary, scriptPath, runtimeConfig.server.password, environment);
         if (!validationOnly) {
             preparedConfig.playlistSources = playlist.playlists.map((item) => ({
                 id: item.id, playlistPath: item.outputFile, weight: item.weight, schedule: item.schedule,
@@ -173,7 +177,7 @@ function prepareRuntime(config, { validationOnly = false } = {}) {
             writePlaylists(playlist.playlists);
             liquidsoapConfig.writeScript(config.scriptPath, liquidsoapConfig.generateScript(preparedConfig));
         }
-        return { binary, playlist, runtimeConfig: preparedConfig, scriptPath: validationOnly ? scriptPath : config.scriptPath };
+        return { binary, playlist, environment, runtimeConfig: preparedConfig, scriptPath: validationOnly ? scriptPath : config.scriptPath };
     } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
     }
@@ -253,6 +257,7 @@ async function runForeground(config, argumentsList = []) {
         finishStartup = beginChildStartup();
         child = childProcess.spawn(runtime.binary, liquidsoapRuntime.getArguments(runtime.binary, [...argumentsList, runtime.scriptPath]), {
             cwd: config.autodjRoot,
+            env: runtime.environment,
             windowsHide: true,
             stdio: ["inherit", "pipe", "pipe"],
         });

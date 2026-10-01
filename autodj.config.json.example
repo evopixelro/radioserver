@@ -3,6 +3,9 @@
   // Consecutive names repeat only when no other playable track is available
   "playlistMode": "randomize",
 
+  // Schedule timezone: UTC, local (system clock) or an IANA name such as Europe/Bucharest
+  "scheduleTimezone": "UTC",
+
   // Check for playlist changes before selection every 1-3600 seconds
   "playlistReloadSeconds": 300,
 

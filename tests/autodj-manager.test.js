@@ -431,3 +431,32 @@ test("background readiness failure stops a recorded supervisor and engine", asyn
     assert.equal(stop.mock.callCount(), 1);
     assert.equal(fs.existsSync(config.pidPath), false);
 });
+
+for (const scheduleTimezone of ["UTC", "local", "europe/bucharest"]) {
+    test(`timezone ${scheduleTimezone} reaches preflight and the running AutoDJ process`, async (context) => {
+        const { config, child, spawn } = runtimeFixture(context);
+        const previous = process.env.TZ;
+        process.env.TZ = "EST5EDT";
+        context.after(() => {
+            if (previous === undefined) delete process.env.TZ;
+            else process.env.TZ = previous;
+        });
+        fs.writeFileSync(config.configPath, JSON.stringify({ scheduleTimezone, server: { password: "test-secret" } }));
+        const expected = scheduleTimezone === "UTC" ? "UTC" : scheduleTimezone === "local" || process.platform === "win32" ? "EST5EDT" : "Europe/Bucharest";
+        let checked = false;
+        context.mock.method(childProcess, "spawnSync", (_binary, args, options) => {
+            if (args.includes("--version")) return { status: 0, stdout: "Liquidsoap 2.4.5" };
+            assert.equal(options.env.TZ, expected);
+            checked = true;
+            return { status: 0, stdout: "" };
+        });
+        const running = runForeground(config);
+        assert.equal(spawn.mock.calls[0].arguments[2].env.TZ, expected);
+        assert.equal(process.env.TZ, "EST5EDT");
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 0);
+        await running;
+        assert.equal(checked, true);
+    });
+}

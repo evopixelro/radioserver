@@ -32,6 +32,7 @@ test("both configuration templates contain valid JSONC", () => {
         fs.readFileSync(path.join(root, "playlist.config.json.example"), "utf8"),
     );
 
+    assert.equal(autodj.scheduleTimezone, "UTC");
     assert.equal(autodj.outputs.length, 1);
     assert.equal(autodj.outputs[0].id, "main");
     assert.equal(playlist.playlists.length, 1);

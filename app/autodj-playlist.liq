@@ -1,10 +1,10 @@
 # One request queue per programme keeps playlist boundaries and prefetch in order
-def radio_schedule_minute() =
-  now = time.local()
+def radio_schedule_minute(~utc=true) =
+  now = if utc then time.utc() else time.local() end
   ((now.week_day + 6) mod 7) * 1440 + now.hour * 60 + now.min
 end
 
-def radio_program(~id, ~mode, ~reload, ~schedules=[], ~schedule_time=radio_schedule_minute, sources) =
+def radio_program(~id, ~mode, ~reload, ~schedules=[], ~schedule_time={radio_schedule_minute()}, sources) =
   id = string.id.default(default="autodj_program", id)
   remaining_schedules = ref(schedules)
   def make_playlist(entry) =

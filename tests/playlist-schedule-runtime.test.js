@@ -177,3 +177,90 @@ test("real Liquidsoap switches after the current track and respects weights, sch
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("real Liquidsoap reads the configured schedule clock on every platform", {
+    skip: !binary && "Set LIQUIDSOAP_TEST_BIN to test real schedule timezones",
+    timeout: 90000,
+}, (context) => {
+    const { scheduleMinute } = require("../app/schedule-clock");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-timezone-runtime-"));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const playlistPath = path.join(root, "universal.lst");
+    fs.writeFileSync(playlistPath, "");
+    for (const scheduleTimezone of ["UTC", "local", "Europe/Bucharest", "America/New_York", "Asia/Kathmandu"]) {
+        const script = generateScript({
+            ...DEFAULT_CONFIG, scheduleTimezone,
+            server: { ...DEFAULT_CONFIG.server, password: "test-secret" },
+            playlistSources: [{ id: "universal", playlistPath, schedule: [{ days: ["monday"] }] }],
+        });
+        const environment = { ...process.env, TZ: ["UTC", "local"].includes(scheduleTimezone) || process.platform === "win32" ? "EST5EDT" : scheduleTimezone };
+        const scriptPath = path.join(root, "generated.liq");
+        fs.writeFileSync(scriptPath, script);
+        const checked = spawnSync(binary, getArguments(binary, ["--no-cache", "--check", scriptPath]), {
+            cwd: root, encoding: "utf8", windowsHide: true, timeout: 15000, env: environment,
+        });
+        assert.ifError(checked.error);
+        assert.equal(checked.status, 0, `${scheduleTimezone}: ${checked.stdout}\n${checked.stderr}`);
+        const definitions = script.slice(0, script.indexOf("\nprogram_0 = radio_program("));
+        const call = script.includes("  schedule_time=radio_named_schedule_minute,")
+            ? "radio_named_schedule_minute()" : script.match(/  schedule_time=\{(.+)\},/)[1];
+        const probePath = path.join(root, "clock.liq");
+        fs.writeFileSync(probePath, `${definitions}\nminute = ${call}\nprint("RADIO_TIMEZONE:#{minute}")\nexit(0)\n`);
+        const timezone = scheduleTimezone === "local" ? "America/New_York" : scheduleTimezone;
+        const before = scheduleMinute(timezone);
+        const result = spawnSync(binary, getArguments(binary, ["--no-cache", probePath]), {
+            cwd: root, encoding: "utf8", windowsHide: true, timeout: 15000, env: environment,
+        });
+        const after = scheduleMinute(timezone);
+        assert.ifError(result.error);
+        assert.equal(result.status, 0, `${scheduleTimezone}: ${result.stdout}\n${result.stderr}`);
+        const value = result.stdout.match(/RADIO_TIMEZONE:(\d+)/);
+        assert.ok(value, result.stdout);
+        assert.ok([before, after].includes(Number(value[1])), `${scheduleTimezone}: ${value[1]} expected ${before} or ${after}`);
+    }
+});
+
+test("Windows schedule clocks quote paths and reject failed or invalid clock results", {
+    skip: (!binary || process.platform !== "win32") && "Requires real Windows Liquidsoap",
+    timeout: 60000,
+}, (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-clock-paths-"));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const directory = path.join(root, "paths with spaces");
+    fs.mkdirSync(directory);
+    const nodePath = path.join(directory, "node clock.exe");
+    fs.copyFileSync(process.execPath, nodePath);
+    const helperPath = path.join(directory, "schedule clock.js");
+    const script = generateScript({
+        ...DEFAULT_CONFIG, scheduleTimezone: "Europe/Bucharest",
+        server: { ...DEFAULT_CONFIG.server, password: "test-secret" },
+        playlistSources: [{ id: "universal", playlistPath: path.join(root, "universal.lst"), schedule: [{ days: ["monday"] }] }],
+    });
+    const helper = path.resolve(__dirname, "../app/schedule-clock.js");
+    const definitions = script.slice(0, script.indexOf("\nprogram_0 = radio_program("))
+        .replace(JSON.stringify(process.execPath), JSON.stringify(nodePath))
+        .replace(JSON.stringify(helper), JSON.stringify(helperPath));
+    assert.ok(definitions.includes(JSON.stringify(nodePath)));
+    assert.ok(definitions.includes(JSON.stringify(helperPath)));
+    const scriptPath = path.join(root, "clock.liq");
+    fs.writeFileSync(scriptPath, `${definitions}\nassert(radio_named_schedule_minute() == 1234)\nprint("RADIO_CLOCK_PATH_OK")\nexit(0)\n`);
+    for (const [content, error] of [
+        ['process.stdout.write("1234\\n");', null],
+        ['process.exitCode = 1;', /Could not read the schedule timezone/],
+        ['process.stdout.write("invalid");', /invalid minute/],
+        ['process.stdout.write("10080");', /invalid minute/],
+    ]) {
+        fs.writeFileSync(helperPath, content);
+        const result = spawnSync(binary, getArguments(binary, ["--no-cache", scriptPath]), {
+            cwd: root, encoding: "utf8", windowsHide: true, timeout: 15000,
+        });
+        assert.ifError(result.error);
+        if (error) {
+            assert.notEqual(result.status, 0);
+            assert.match(result.stdout + result.stderr, error);
+        } else {
+            assert.equal(result.status, 0, result.stdout + result.stderr);
+            assert.match(result.stdout, /RADIO_CLOCK_PATH_OK/);
+        }
+    }
+});

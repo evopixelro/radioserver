@@ -1,11 +1,16 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
     DEFAULT_CONFIG,
     MP3_BITRATES,
     MP3_SAMPLE_RATES,
     generateScript,
+    loadConfig,
+    resolveScheduleTimezone,
     validateConfig,
 } = require("../app/liquidsoap-config");
 
@@ -317,3 +322,45 @@ for (const id of ["unknown", "Universal", "disabled"]) {
             new RegExp(`output_0.*unknown or disabled playlist "${id}"`));
     });
 }
+
+test("older AutoDJ configs default to UTC and accept an explicit timezone", (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-timezone-config-"));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const configPath = path.join(root, "autodj.config.json");
+    fs.writeFileSync(configPath, JSON.stringify({ server: { password: "test-secret" } }));
+    assert.equal(loadConfig({ autodjRoot: root }).scheduleTimezone, "UTC");
+    for (const scheduleTimezone of ["local", "Europe/Bucharest"]) {
+        fs.writeFileSync(configPath, JSON.stringify({ scheduleTimezone, server: { password: "test-secret" } }));
+        assert.equal(loadConfig({ autodjRoot: root }).scheduleTimezone, scheduleTimezone);
+    }
+});
+
+test("schedule timezones validate and normalize names without changing the process timezone", () => {
+    const previous = process.env.TZ;
+    assert.equal(resolveScheduleTimezone("UTC"), "UTC");
+    assert.equal(resolveScheduleTimezone("Etc/UTC"), "UTC");
+    assert.equal(resolveScheduleTimezone("local"), "local");
+    assert.equal(resolveScheduleTimezone("europe/bucharest"), "Europe/Bucharest");
+    assert.equal(resolveScheduleTimezone("America/New_York"), "America/New_York");
+    for (const value of [null, 3, [], {}, "", " UTC ", "UTC\n", "Invalid/Timezone", "+03:00"]) {
+        assert.throws(() => resolveScheduleTimezone(value), /scheduleTimezone/);
+    }
+    assert.equal(process.env.TZ, previous);
+});
+
+test("scheduled programmes use the configured clock", () => {
+    for (const scheduleTimezone of ["UTC", "local", "Europe/Bucharest"]) {
+        const config = createConfig({ scheduleTimezone });
+        config.playlistSources[0].schedule = [{ days: ["monday"] }];
+        const script = generateScript(config);
+        if (process.platform === "win32" && scheduleTimezone === "Europe/Bucharest") {
+            assert.ok(script.includes("schedule_time=radio_named_schedule_minute,"));
+            assert.ok(script.includes('"Europe/Bucharest"'));
+            assert.ok(script.includes("process.quote.command("));
+        } else {
+            assert.ok(script.includes(`schedule_time={radio_schedule_minute(utc=${scheduleTimezone === "UTC"})},`));
+        }
+    }
+    assert.throws(() => generateScript(createConfig({ scheduleTimezone: "invalid" })), /scheduleTimezone/);
+    assert.doesNotMatch(generateScript(createConfig({ scheduleTimezone: "Europe/Bucharest" })), /process.run|\n  schedule_time=/);
+});

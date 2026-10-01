@@ -320,8 +320,14 @@ for different hours on other days. To run for whole days, omit both times:
 When using times, supply both `start` and `end` in `HH:MM` format. The start is
 included and the end is excluded; `24:00` is allowed only as an end. An end
 earlier than the start continues into the next day: Friday 22:00–02:00 ends on
-Saturday. Times follow the server's local clock, including daylight-saving
-changes; skipped hours are skipped and repeated hours follow the schedule again.
+Saturday. Times use `scheduleTimezone` in `autodj.config.json`, which defaults
+to `"UTC"`. Use an IANA name such as `"Europe/Bucharest"` or `"America/New_York"`,
+or `"local"` to follow the system clock. Restart AutoDJ after changing this setting.
+On Windows, named timezones use Node.js to read the schedule clock before each
+track selection; UTC and local time use Liquidsoap directly.
+
+UTC has no daylight-saving changes. With other timezones, skipped hours are
+skipped and repeated hours follow the schedule again.
 
 For consecutive playlists, use `start: "12:00", end: "13:00"` on one playlist
 and `start: "13:00", end: "24:00"` on the other, both with `days: ["friday"]`.
