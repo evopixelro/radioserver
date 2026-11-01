@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { randomBytes } = require("node:crypto");
 const download = require("./download");
 const { readRuntimeManifest } = require("./runtime-manifest");
 const { cleanupRuntimeDirectory, managedDirectory, readCleanupManifest } = require("./runtime-cleanup");
@@ -22,14 +23,23 @@ function compareVersions(left, right) {
     return 0;
 }
 
-async function latestVersion(fetchImplementation = globalThis.fetch) {
-    const response = await fetchImplementation("https://ffmpeg.org/releases/", {
-        signal: AbortSignal.timeout(30000), redirect: "error",
-        headers: { "User-Agent": "RadioServer runtime installer" },
-    });
-    if (!response.ok) throw new Error(`Could not check official FFmpeg releases: HTTP ${response.status}.`);
-    const html = await response.text();
-    if (html.length > 4 * 1024 * 1024) throw new Error("The FFmpeg release catalogue exceeds the size limit.");
+async function latestVersion(fetchImplementation) {
+    let html;
+    if (fetchImplementation) {
+        const response = await fetchImplementation("https://ffmpeg.org/releases/", {
+            signal: AbortSignal.timeout(30000), redirect: "error",
+            headers: { "User-Agent": "RadioServer runtime installer" },
+        });
+        if (!response.ok) throw new Error(`Could not check official FFmpeg releases: HTTP ${response.status}.`);
+        html = await response.text();
+        if (html.length > 4 * 1024 * 1024) throw new Error("The FFmpeg release catalogue exceeds the size limit.");
+    } else {
+        try {
+            html = await download.readText({ url: "https://ffmpeg.org/releases/", timeoutMs: 30000, maxBytes: 4 * 1024 * 1024 });
+        } catch (error) {
+            throw new Error(`Could not check official FFmpeg releases: ${error.message}`);
+        }
+    }
     // Liquidsoap 2.4 supports FFmpeg 7 and 8, not arbitrary future major versions.
     const versions = [...html.matchAll(/href=["']ffmpeg-([78]\.\d+(?:\.\d+)?)\.tar\.xz["']/g)].map((match) => match[1]);
     versions.sort((left, right) => compareVersions(right, left));
@@ -63,6 +73,11 @@ function environment(runtime, profile, base = process.env) {
     const prepend = (key, value) => { env[key] = [value, env[key]].filter(Boolean).join(path.delimiter); };
     prepend("PATH", path.join(runtime.prefix, "bin"));
     prepend("PKG_CONFIG_PATH", path.join(runtime.prefix, "lib", "pkgconfig"));
+    // pkg-config otherwise filters paths already present in CPATH and LIBRARY_PATH.
+    env.PKG_CONFIG_ALLOW_SYSTEM_CFLAGS = "1";
+    env.PKG_CONFIG_ALLOW_SYSTEM_LIBS = "1";
+    prepend("CPATH", path.join(runtime.prefix, "include"));
+    prepend("LIBRARY_PATH", path.join(runtime.prefix, "lib"));
     prepend(profile.family === "macos" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH", path.join(runtime.prefix, "lib"));
     return env;
 }
@@ -81,8 +96,17 @@ function validate(runtime, profile, run = spawnSync) {
 async function prepare(serverRoot, profile, { fetchImplementation, check = validate, force = false } = {}) {
     if (profile.family === "windows") return { strategy: "bundled" };
     runtimeRoot(serverRoot, profile);
-    const version = await latestVersion(fetchImplementation);
     const current = resolve(serverRoot, profile);
+    let version;
+    try {
+        version = await latestVersion(fetchImplementation);
+    } catch (error) {
+        if (current && check(current, profile)) {
+            console.warn(`FFmpeg release check failed; reusing validated local FFmpeg ${current.version}: ${error.message}`);
+            return { strategy: "existing", version: current.version, current };
+        }
+        throw error;
+    }
     if (!force && current && compareVersions(current.version, version) > 0) {
         throw new Error(`Installed FFmpeg ${current.version} is newer than the official catalogue (${version}); refusing an automatic downgrade.`);
     }
@@ -140,7 +164,14 @@ async function install(serverRoot, profile, plan, {
     }
     fs.mkdirSync(path.join(root, "builds"), { recursive: true, mode: 0o750 });
     const staging = fs.mkdtempSync(path.join(root, "source.tmp-"));
-    const prefix = fs.mkdtempSync(path.join(root, "builds", `${plan.version}-`));
+    // Keep FFmpeg build suffixes lowercase because the OCaml generator parses -I flags naively.
+    let prefix;
+    for (let attempt = 0; attempt < 10 && !prefix; attempt += 1) {
+        const candidate = path.join(root, "builds", `${plan.version}-${randomBytes(3).toString("hex")}`);
+        try { fs.mkdirSync(candidate, { mode: 0o750 }); prefix = candidate; }
+        catch (error) { if (error.code !== "EEXIST") throw error; }
+    }
+    if (!prefix) throw new Error("Could not reserve a unique FFmpeg build directory.");
     let activated = false;
     const command = (executable, args, options = {}) => {
         const result = run(executable, args, { cwd: staging, stdio: "inherit", timeout: 3600000, ...options });

@@ -134,6 +134,19 @@ function install(serverRoot, profile, version, {
     };
     fs.mkdirSync(parent, { recursive: true, mode: 0o750 });
     const staging = fs.mkdtempSync(path.join(parent, "runtime.tmp-"));
+    let pkgConfig;
+    let pkgConfigWrapper;
+    if (ffmpeg) {
+        // Force OPAM package probes through the managed FFmpeg pkg-config metadata.
+        const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+        const originalPath = environment.PATH || "";
+        const pkgConfigPath = path.join(ffmpeg.prefix, "lib", "pkgconfig");
+        const inheritedPkgConfigPath = environment.PKG_CONFIG_PATH;
+        pkgConfigWrapper = `#!/bin/sh\nexport PATH=${quote(originalPath)}\nexport PKG_CONFIG_PATH=${quote(pkgConfigPath)}${inheritedPkgConfigPath ? `:${quote(inheritedPkgConfigPath)}` : ""}\nexec pkg-config "$@"\n`;
+        if (profile.family === "linux") environment.OPAM_USER_PATH_RO = ffmpeg.prefix;
+        delete environment.CPATH;
+        delete environment.LIBRARY_PATH;
+    }
     let created = false;
     let activated = false;
     try {
@@ -143,12 +156,20 @@ function install(serverRoot, profile, version, {
         command(["update", "default", "--yes"]);
         created = true;
         command(["switch", "create", switchName, "--empty", "--no-switch", "--yes"]);
+        if (pkgConfigWrapper) {
+            // OPAM rebuilds PATH inside package sandboxes; place the wrapper in the private switch bin directory.
+            pkgConfig = path.join(opamRoot, switchName, "bin", "pkg-config");
+            fs.mkdirSync(path.dirname(pkgConfig), { recursive: true, mode: 0o750 });
+            fs.writeFileSync(pkgConfig, pkgConfigWrapper, { mode: 0o755 });
+            environment.PKG_CONFIG = pkgConfig;
+        }
         command(["install", `--switch=${switchName}`, "--yes", "--no-depexts", "--require-checksums", "--jobs=2",
             "ocaml-base-compiler", "ffmpeg", `liquidsoap.${version}`]);
         const runBuilt = (executable, args, options) => run(executable, args, { ...options, env: environment });
         const check = validate(binary, runBuilt);
         if (!check.ok) throw new Error(`The compiled Liquidsoap runtime failed validation: ${check.detail}`);
         verify(binary, version, runBuilt);
+        if (pkgConfig) fs.rmSync(pkgConfig, { force: true });
         // Keep OPAM prefixes fixed; only the small runtime directory is replaced on activation.
         if (ffmpeg) {
             const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;

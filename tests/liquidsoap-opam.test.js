@@ -226,16 +226,33 @@ for (const family of ["linux", "macos", "freebsd"]) {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-opam-local-"));
         context.after(() => fs.rmSync(root, { recursive: true, force: true }));
         const profile = { family, id: `${family}-x64`, architecture: "x64" };
+        const parent = path.join(root, "bin", "liquidsoap");
         const ffmpeg = { version: "8.1.2", prefix: path.join(root, "bin", "ffmpeg", profile.id, "builds", "8.1.2-example") };
         const libraryPath = family === "macos" ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
         const binary = opam.install(root, profile, "2.4.5", { ffmpeg, userId: 1000,
             run(_command, _args, options) {
                 assert.ok(options.env.PKG_CONFIG_PATH.startsWith(path.join(ffmpeg.prefix, "lib", "pkgconfig")));
+                if (_command === "opam" && _args[0] === "install") {
+                    const switchName = _args.find((value) => value.startsWith("--switch=")).slice(9);
+                    assert.equal(options.env.PKG_CONFIG, path.join(parent, profile.id, "opam", switchName, "bin", "pkg-config"));
+                    assert.equal(options.env.PATH.split(path.delimiter)[0], path.join(ffmpeg.prefix, "bin"));
+                    assert.equal(options.env.PKG_CONFIG_ALLOW_SYSTEM_CFLAGS, "1");
+                    assert.equal(options.env.PKG_CONFIG_ALLOW_SYSTEM_LIBS, "1");
+                    assert.equal(options.env.CPATH, undefined);
+                    assert.equal(options.env.LIBRARY_PATH, undefined);
+                    const wrapper = fs.readFileSync(options.env.PKG_CONFIG, "utf8");
+                    assert.ok(wrapper.includes(path.join(ffmpeg.prefix, "lib", "pkgconfig")));
+                    assert.match(wrapper, /export PKG_CONFIG_PATH=/);
+                    assert.ok(wrapper.includes('exec pkg-config "$@"'));
+                    assert.ok(wrapper.includes(`export PATH='${options.env.PATH.replaceAll("'", "'\\''")}'`));
+                    if (family === "linux") assert.equal(options.env.OPAM_USER_PATH_RO, ffmpeg.prefix);
+                }
                 return { status: 0, stdout: "2.1.0" };
             },
             validate: () => ({ ok: true }), verify: () => "2.4.5", activate: activateRuntime,
         });
         const launcher = fs.readFileSync(binary, "utf8");
+        assert.equal(fs.existsSync(path.join(path.dirname(binary), "pkg-config")), false);
         assert.match(launcher, /^#!\/bin\/sh\nexport PATH=/);
         assert.ok(launcher.includes(`export ${libraryPath}=`));
         assert.ok(launcher.includes(`\${${libraryPath}:+:\"$${libraryPath}\"}`));

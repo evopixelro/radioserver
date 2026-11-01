@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { selectRelease, latestPackage } = require("../app/liquidsoap-releases");
+const { latestRelease, selectRelease, latestPackage } = require("../app/liquidsoap-releases");
 
 function release(version, codename = "noble", options = {}) {
     const name = `liquidsoap_${version}-ubuntu-${codename}-ocaml4.14.2-2_amd64.deb`;
@@ -46,6 +46,18 @@ test("unpublished checksums require an exact previously verified asset URL", () 
     assert.throws(() => selectRelease([item], target), /no published SHA-256/);
     const known = [{ url: item.assets[0].browser_download_url, sha256: "b".repeat(64) }];
     assert.equal(selectRelease([item], target, known).sha256, "b".repeat(64));
+});
+
+test("default Liquidsoap catalogue lookup uses a bounded larger response limit", async () => {
+    let options;
+    const result = await latestRelease(undefined, async (request) => {
+        options = request;
+        return JSON.stringify([release("2.4.5")]);
+    });
+    assert.equal(result.version, "2.4.5");
+    assert.equal(options.url, "https://api.github.com/repos/savonet/liquidsoap-release-assets/releases?per_page=100&page=1");
+    assert.equal(options.timeoutMs, 30000);
+    assert.equal(options.maxBytes, 32 * 1024 * 1024);
 });
 
 test("release lookup reports network failure instead of claiming an old version is latest", async () => {

@@ -1,4 +1,5 @@
 const path = require("node:path");
+const { readText } = require("./download");
 
 const RELEASES_API = "https://api.github.com/repos/savonet/liquidsoap-release-assets/releases";
 const ASSET_PREFIX = "https://github.com/savonet/liquidsoap-release-assets/releases/download/";
@@ -57,19 +58,29 @@ function selectRelease(releases, target, knownPackages = []) {
     };
 }
 
-async function latestRelease(fetchImplementation = globalThis.fetch) {
+async function latestRelease(fetchImplementation, readTextImplementation = readText) {
     const catalogue = [];
     for (let page = 1; page <= 10; page += 1) {
-        const response = await fetchImplementation(`${RELEASES_API}?per_page=100&page=${page}`, {
-            headers: { Accept: "application/vnd.github+json", "User-Agent": "RadioServer runtime installer" },
-            signal: AbortSignal.timeout(30000),
-        });
-        if (!response.ok) {
-            const limited = response.status === 429 || response.headers?.get("x-ratelimit-remaining") === "0";
-            const hint = limited ? " GitHub API rate limit reached; retry after the limit resets." : " Try again later.";
-            throw new Error(`Could not check official Liquidsoap releases: HTTP ${response.status}.${hint} No older release was selected.`);
+        const url = `${RELEASES_API}?per_page=100&page=${page}`;
+        let releases;
+        if (fetchImplementation) {
+            const response = await fetchImplementation(url, {
+                headers: { Accept: "application/vnd.github+json", "User-Agent": "RadioServer runtime installer" },
+                signal: AbortSignal.timeout(30000),
+            });
+            if (!response.ok) {
+                const limited = response.status === 429 || response.headers?.get("x-ratelimit-remaining") === "0";
+                const hint = limited ? " GitHub API rate limit reached; retry after the limit resets." : " Try again later.";
+                throw new Error(`Could not check official Liquidsoap releases: HTTP ${response.status}.${hint} No older release was selected.`);
+            }
+            releases = await response.json();
+        } else {
+            try {
+                releases = JSON.parse(await readTextImplementation({ url, timeoutMs: 30000, maxBytes: 32 * 1024 * 1024 }));
+            } catch (error) {
+                throw new Error(`Could not check official Liquidsoap releases: ${error.message} No older release was selected.`);
+            }
         }
-        const releases = await response.json();
         if (!Array.isArray(releases)) throw new Error("Invalid Liquidsoap release response.");
         catalogue.push(...releases);
         if (releases.length < 100) {
@@ -85,7 +96,7 @@ function packageForRelease(release, target, serverRoot, knownPackages = []) {
     return selected && { ...selected, filePath: path.join(serverRoot, "bin", "downloads", "liquidsoap", selected.fileName) };
 }
 
-async function latestPackage(target, serverRoot, knownPackages, fetchImplementation = globalThis.fetch) {
+async function latestPackage(target, serverRoot, knownPackages, fetchImplementation) {
     const release = await latestRelease(fetchImplementation);
     const selected = packageForRelease(release, target, serverRoot, knownPackages);
     if (selected) return selected;

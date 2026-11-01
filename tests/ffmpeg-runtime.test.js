@@ -3,10 +3,20 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const download = require("../app/download");
 const ffmpeg = require("../app/ffmpeg-runtime");
 
 const key = "FCF986EA15E6E293A5644F10B4322F04D67658D8";
 const profile = { family: "linux", architecture: "x64", id: "linux-x64" };
+
+test("FFmpeg catalogue lookup uses the resilient HTTPS downloader by default", async (context) => {
+    context.mock.method(download, "readText", async (options) => {
+        assert.equal(options.url, "https://ffmpeg.org/releases/");
+        assert.equal(options.timeoutMs, 30000);
+        return '<a href="ffmpeg-8.1.3.tar.xz">stable</a>';
+    });
+    assert.equal(await ffmpeg.latestVersion(), "8.1.3");
+});
 
 test("FFmpeg selection uses official stable compatible releases, never nightly or future majors", async () => {
     const version = await ffmpeg.latestVersion(async (url, options) => {
@@ -48,12 +58,19 @@ test("Ubuntu LAME headers work even without a lame.pc file", () => {
 
 test("managed FFmpeg environment preserves existing paths without changing the process environment", () => {
     const prefix = path.resolve("/private/ffmpeg");
-    const original = { PATH: "/usr/bin", PKG_CONFIG_PATH: "/usr/lib/pkgconfig", LD_LIBRARY_PATH: "/custom/lib", KEEP: "value" };
+    const original = { PATH: "/usr/bin", PKG_CONFIG_PATH: "/usr/lib/pkgconfig", CPATH: "/usr/include",
+        LIBRARY_PATH: "/usr/lib", LD_LIBRARY_PATH: "/custom/lib", KEEP: "value" };
     const env = ffmpeg.environment({ prefix }, profile, original);
     assert.equal(env.PATH, `${path.join(prefix, "bin")}${path.delimiter}/usr/bin`);
+    assert.equal(env.CPATH, `${path.join(prefix, "include")}${path.delimiter}/usr/include`);
+    assert.equal(env.PKG_CONFIG_ALLOW_SYSTEM_CFLAGS, "1");
+    assert.equal(env.PKG_CONFIG_ALLOW_SYSTEM_LIBS, "1");
+    assert.equal(env.LIBRARY_PATH, `${path.join(prefix, "lib")}${path.delimiter}/usr/lib`);
     assert.equal(env.LD_LIBRARY_PATH, `${path.join(prefix, "lib")}${path.delimiter}/custom/lib`);
     assert.equal(env.KEEP, "value");
     assert.equal(original.PATH, "/usr/bin");
+    assert.equal(original.PKG_CONFIG_ALLOW_SYSTEM_CFLAGS, undefined);
+    assert.equal(original.PKG_CONFIG_ALLOW_SYSTEM_LIBS, undefined);
     assert.equal(ffmpeg.environment({ prefix }, { family: "macos" }, {}).DYLD_LIBRARY_PATH, path.join(prefix, "lib"));
 });
 
@@ -101,6 +118,7 @@ test("managed FFmpeg verifies signatures before extraction and activates only a 
     assert.ok(configuration.args.includes("--enable-openssl"));
     assert.ok(configuration.args.includes("--enable-shared"));
     assert.ok(configuration.args.includes(`--prefix=${runtime.prefix}`));
+    assert.match(path.basename(runtime.prefix), /^8[.]1[.]2-[a-f0-9]{6}$/);
     assert.equal(JSON.parse(fs.readFileSync(manifest)).signingKey, key);
     assert.equal(ffmpeg.resolve(root, profile).prefix, runtime.prefix);
     assert.deepEqual(fs.readdirSync(path.dirname(manifest)).sort(), ["builds", "runtime.json"]);
@@ -131,6 +149,37 @@ for (const failure of ["key", "signature", "compile", "validation"]) {
         if (["key", "signature"].includes(failure)) assert.equal(commands.some(({ command, args }) => command === "tar" && args.includes("-xf")), false);
     });
 }
+
+test("FFmpeg release lookup failure reuses only a validated managed local runtime", async (context) => {
+    const { root, options } = fixture(context);
+    const runtime = await ffmpeg.install(root, profile, { strategy: "source", version: "8.1.2" }, options);
+    context.mock.method(console, "warn", () => {});
+    const unavailable = { check: () => true, force: true,
+        fetchImplementation: async () => { throw new Error("network unavailable"); } };
+    const plan = await ffmpeg.prepare(root, profile, unavailable);
+    assert.equal(plan.strategy, "existing");
+    assert.equal(plan.version, runtime.version);
+    assert.equal(plan.current.prefix, runtime.prefix);
+    assert.equal((await ffmpeg.install(root, profile, plan, { check: () => true,
+        run: () => assert.fail("must not compile"), fetchFile: () => assert.fail("must not download"),
+    })).prefix, runtime.prefix);
+
+    await assert.rejects(ffmpeg.prepare(root, profile, {
+        check: () => false,
+        fetchImplementation: unavailable.fetchImplementation,
+    }), /network unavailable/);
+});
+
+test("FFmpeg release lookup failure remains fatal when no managed local runtime exists", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "radio-ffmpeg-empty-"));
+    try {
+        await assert.rejects(ffmpeg.prepare(root, profile, {
+            fetchImplementation: async () => { throw new Error("catalogue unavailable"); },
+        }), /catalogue unavailable/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
 
 test("FFmpeg update reuses the validated current prefix without build tools or downloads", async (context) => {
     const { root, options } = fixture(context);

@@ -22,12 +22,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-14]
+        os: [ubuntu-22.04, windows-2022, macos-15]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Ubuntu build prerequisites
@@ -51,12 +51,19 @@ jobs:
           set -euo pipefail
           brew install opam pkg-config libffi xz gnupg lame openssl@3 zlib curl
           echo "PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+      - name: Fetch FFmpeg CI fixtures
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash .github/scripts/fetch-ffmpeg-fixtures.sh "$GITHUB_WORKSPACE/.ci/ffmpeg-fixtures"
       - name: Validate the managed installer
         shell: bash
         env:
           LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ "$RUNNER_OS" != Windows ]; then
+            export RADIOSERVER_CI_FFMPEG_FIXTURES="$GITHUB_WORKSPACE/.ci/ffmpeg-fixtures"
+          fi
           node .github/scripts/install-liquidsoap.js "$RUNNER_TEMP/radio-installer"
           if [ "$RUNNER_OS" = Linux ]; then
             node .github/scripts/install-shoutcast.js "$RUNNER_TEMP/radio-installer"
@@ -80,9 +87,15 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Fetch FFmpeg CI fixtures
+        shell: bash
+        run: bash .github/scripts/fetch-ffmpeg-fixtures.sh "$GITHUB_WORKSPACE/.ci/ffmpeg-fixtures"
       - uses: vmactions/freebsd-vm@4469451fe39bee80be4066836c5170362e9349f3 # v1
         env:
           LIQUIDSOAP_CI_GITHUB_TOKEN: ${{ github.token }}
@@ -107,6 +120,7 @@ jobs:
               IFS= read -r LIQUIDSOAP_CI_GITHUB_TOKEN
               export LIQUIDSOAP_CI_GITHUB_TOKEN
               cd /home/radio-test/radioserver
+              export RADIOSERVER_CI_FFMPEG_FIXTURES=/home/radio-test/radioserver/.ci/ffmpeg-fixtures
               node .github/scripts/install-shoutcast.js /home/radio-test/radio-runtime
               export SHOUTCAST_TEST_BIN=/home/radio-test/radio-runtime/bin/shoutcast/freebsd-x64/sc_serv
               (unset LIQUIDSOAP_CI_GITHUB_TOKEN; node --test --test-reporter=tap tests/shoutcast-runtime.test.js)
@@ -126,7 +140,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: lima-vm/lima-actions/setup@55627e31b78637bf254a8b2a14da8ea7d12564e5 # v1
@@ -136,6 +150,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash .github/scripts/fetch-ffmpeg-fixtures.sh "$GITHUB_WORKSPACE/.ci/ffmpeg-fixtures"
           limactl start --plain --name=radio-fedora --cpus=2 --memory=4 --disk=30 --tty=false template:fedora-44
           ssh lima-radio-fedora sudo dnf install -y --allowerasing nodejs npm opam gcc gcc-c++ make pkgconf-pkg-config m4 rsync git bubblewrap curl ca-certificates patch unzip tar gzip bzip2 xz diffutils libcurl-devel libffi-devel lame-devel openssl-devel zlib-devel gnupg2 nasm procps-ng
           rsync -a --exclude=.git --exclude=bin --exclude=.run --exclude=logs ./ lima-radio-fedora:radioserver/
@@ -149,6 +164,7 @@ jobs:
           printf '%s\n' "$LIQUIDSOAP_CI_GITHUB_TOKEN"
           cat <<'FEDORA'
           cd "$HOME/radioserver"
+          export RADIOSERVER_CI_FFMPEG_FIXTURES="$HOME/radioserver/.ci/ffmpeg-fixtures"
           test "$(. /etc/os-release; echo "$ID:$VERSION_ID")" = fedora:44
           node .github/scripts/install-liquidsoap.js "$HOME/radio-runtime"
           unset LIQUIDSOAP_CI_GITHUB_TOKEN
